@@ -1,7 +1,7 @@
 /*
- * KernelESP v1.0
- * A Linux-like interactive shell for the ESP32
- * Tested on ESP32 - WROOM
+   KernelESP v1.0
+   A Linux-like interactive shell for the ESP32
+  Tested on ESP32 - WROOM
  */
 
 #include <Arduino.h>
