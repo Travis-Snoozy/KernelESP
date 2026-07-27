@@ -137,8 +137,10 @@ int resolvePin(const char* name) {
     return (ch < 10) ? amap[ch] : -1;
   }
   if (strcasecmp(name, "LED") == 0) return 2;   // Built-in LED most boards
+#ifdef SOC_DAC_SUPPORTED
   if (strcasecmp(name, "DAC1") == 0) return 25;
   if (strcasecmp(name, "DAC2") == 0) return 26;
+#endif
   return -1;
 }
 
@@ -310,13 +312,13 @@ void cmdPWM(char** argv, uint8_t argc) {
   int duty = constrain(safeAtoi(argv[2]), 0, 255);
   int freq = (argc >= 4) ? safeAtoi(argv[3]) : 5000;
   int ch   = (argc >= 5) ? constrain(safeAtoi(argv[4]), 0, 15) : 0;
-  ledcSetup(ch, freq, 8);          // 8-bit resolution
-  ledcAttachPin(pin, ch);
-  ledcWrite(ch, duty);
+  ledcAttachChannel(pin, freq, 8, ch);
+  ledcWrite(pin, duty);
   float pct = duty * 100.0f / 255.0f;
   Serial.printf("GPIO%d PWM ch%d: duty=%d (%.0f%%) freq=%dHz\n", pin, ch, duty, pct, freq);
 }
 
+#ifdef SOC_DAC_SUPPORTED
 void cmdDAC(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: dac <25|26> <0-255>")); return; }
   int pin = resolvePin(argv[1]);
@@ -326,6 +328,7 @@ void cmdDAC(char** argv, uint8_t argc) {
   float v = val * 3.3f / 255.0f;
   Serial.printf("DAC GPIO%d = %d (%.3fV)\n", pin, val, v);
 }
+#endif
 
 void cmdTouch(char** argv, uint8_t argc) {
   // Touch-capable pins: 0,2,4,12,13,14,15,27,32,33
@@ -359,15 +362,14 @@ void cmdTone(char** argv, uint8_t argc) {
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int freq = safeAtoi(argv[2]);
   if (freq < 1 || freq > 20000) { Serial.println(RED "Frequency: 1-20000 Hz" RESET); return; }
-  ledcSetup(14, freq, 8);
-  ledcAttachPin(pin, 14);
-  ledcWrite(14, 127); // 50% duty = square wave
+  ledcAttachChannel(pin, freq, 8, 14);
+  ledcWrite(pin, 127); // 50% duty = square wave
   if (argc >= 4) {
     int ms = safeAtoi(argv[3]);
     Serial.printf("Tone GPIO%d: %dHz for %dms\n", pin, freq, ms);
     delay(ms);
-    ledcWrite(14, 0);
-    ledcDetachPin(pin);
+    ledcWrite(pin, 0);
+    ledcDetach(pin);
   } else {
     Serial.printf("Tone GPIO%d: %dHz continuous. Use 'notone %s' to stop.\n", pin, freq, argv[1]);
   }
@@ -375,8 +377,8 @@ void cmdTone(char** argv, uint8_t argc) {
 
 void cmdNoTone(char** argv, uint8_t argc) {
   int pin = (argc >= 2) ? resolvePin(argv[1]) : -1;
-  ledcWrite(14, 0);
-  if (pin >= 0) ledcDetachPin(pin);
+  ledcWrite(pin, 0);
+  if (pin >= 0) ledcDetach(pin);
   Serial.println("Tone stopped");
 }
 
@@ -1047,7 +1049,9 @@ void cmdHelp(char** argv, uint8_t argc) {
   Serial.println(F("    read    [pin]                 Digital read (all if no pin)"));
   Serial.println(F("    aread   [pin]                 ADC read (0-4095, 3.3V)"));
   Serial.println(F("    pwm     <pin> <0-255> [freq]  LEDC PWM output"));
+  #ifdef SOC_DAC_SUPPORTED
   Serial.println(F("    dac     <25|26> <0-255>       DAC voltage output"));
+  #endif
   Serial.println(F("    gpio    <pin> <on|off|toggle> Quick GPIO"));
   Serial.println(F("    tone    <pin> <hz> [ms]       Square wave tone"));
   Serial.println(F("    notone  [pin]                 Stop tone"));
@@ -1110,7 +1114,9 @@ void executeCommand(char* line) {
   else if (!strcmp(cmd,"read")   || !strcmp(cmd,"digitalread"))  cmdDigitalRead(args, argc);
   else if (!strcmp(cmd,"aread")  || !strcmp(cmd,"analogread"))   cmdAnalogRead(args, argc);
   else if (!strcmp(cmd,"pwm"))                              cmdPWM(args, argc);
+  #ifdef SOC_DAC_SUPPORTED
   else if (!strcmp(cmd,"dac"))                              cmdDAC(args, argc);
+  #endif
   else if (!strcmp(cmd,"gpio"))                             cmdGPIO(args, argc);
   else if (!strcmp(cmd,"tone"))                             cmdTone(args, argc);
   else if (!strcmp(cmd,"notone"))                           cmdNoTone(args, argc);
