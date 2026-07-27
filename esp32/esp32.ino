@@ -246,7 +246,7 @@ void showLogo() {
   // System info bar
   uint32_t heap = ESP.getFreeHeap();
   uint32_t flash = ESP.getFlashChipSize() / 1024;
-  Serial.printf(GRAY "  CPU: " WHITE "Xtensa LX6 @ %dMHz  " GRAY
+  Serial.printf(GRAY "  Board: " WHITE ARDUINO_BOARD" @ %dMHz  " GRAY
                 "RAM: " WHITE "%u KB free  " GRAY
                 "Flash: " WHITE "%u KB" RESET "\n",
                 ESP.getCpuFreqMHz(), heap / 1024, flash);
