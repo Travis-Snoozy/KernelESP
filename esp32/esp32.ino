@@ -18,50 +18,39 @@
 // Boards
 #ifdef ARDUINO_ESP32S3_DEV
 #define KESP_BOARD_SET
-const int boardAMap[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9};
-// Avoid the pins used for PSRAM, Flash, UART0, and USB, which we might be using
+// Avoid the pins used for PSRAM/Flash (26-32, 33-38 octal), UART0 (15-16, 43-44),
+// and USB (19-20), which we might be using.
 // TODO: be smarter about including/excluding those pins based on further config defines
-const int boardDPins[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,17,18,21,38,39,40,41,42,45,46,47,48};
-// Avoid the pins for UART0 and USB
-const int boardAdcPins[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A16, A17};
-const char* boardAdcNames[] = {"A0/GPIO1","A1/GPIO2","A2/GPIO3",
-                               "A3/GPIO4","A4/GPIO5","A5/GPIO6",
-                               "A6/GPIO7","A7/GPIO8","A8/GPIO9",
-                               "A9/GPIO10","A10/GPIO11","A11/GPIO12",
-                               "A12/GPIO13","A13/GPIO14","A16/GPIO17",
-                               "A17/GPIO18"};
+#define KESP_GPIO_OPI_MASK (BIT33 | BIT34 | BIT35 | BIT36 | BIT37)
+#define KESP_GPIO_VALID_GPIO_MASK (SOC_GPIO_VALID_GPIO_MASK & ~(0ULL | BIT15 | BIT16 | BIT19 | BIT20 | BIT26 | BIT27 | BIT28 | BIT29 | BIT30 | BIT31 | BIT32 | KESP_GPIO_OPI_MASK | BIT43 | BIT44))
+const int boardAdcPins[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17};
 const int boardTouchPins[] = {T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14};
-const char* boardTouchNames[] = {"T1/GPIO1","T2/GPIO2","T3/GPIO3",
-                                 "T4/GPIO4","T5/GPIO5","T6/GPIO6",
-                                 "T7/GPIO7","T8/GPIO8","T9/GPIO9",
-                                 "T10/GPIO10","T11/GPIO11","T12/GPIO12",
-                                 "T13/GPIO13","T14/GPIO14"};
 const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 17, 18, 21};
 #endif
 
 // Fallback (original "ESP32 WROOM" values)
 #ifndef KESP_BOARD_SET
-const int boardAMap[] = {36, 39, 34, 35, 32, 33, 25, 26, 27, 14};
-const int boardDPins[] = {2,4,5,12,13,14,15,16,17,18,19,21,22,23,25,26,27,32,33,34,35,36,39};
-const int boardAdcPins[] = {36, 39, 34, 35, 32, 33};
-const char* boardAdcNames[] = {"A0/GPIO36","A1/GPIO39","A2/GPIO34",
-                               "A3/GPIO35","A4/GPIO32","A5/GPIO33"};
+#define KESP_GPIO_VALID_GPIO_MASK (SOC_GPIO_VALID_GPIO_MASK & ~(0ULL | BIT0 | BIT1 | BIT3 | BIT6 | BIT7 | BIT8 | BIT9 | BIT10 | BIT11 | BIT20 | BIT37 | BIT38))
+const int boardAdcPins[] = {36, 39, 34, 35, 32, 33, 25, 26, 27, 14};
 const int boardTouchPins[] = {4, 0, 2, 15, 13, 12, 14, 27, 33, 32};
-const char* boardTouchNames[] = {"T0/GPIO4","T1/GPIO0","T2/GPIO2","T3/GPIO15",
-                        "T4/GPIO13","T5/GPIO12","T6/GPIO14","T7/GPIO27",
-                        "T8/GPIO33","T9/GPIO32"};
 const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23};
 #endif
 
 #define BOARD_ADC_COUNT (sizeof(boardAdcPins)/sizeof(int))
 #define BOARD_TOUCH_COUNT (sizeof(boardTouchPins)/sizeof(int))
 #define BOARD_DISCO_COUNT (sizeof(boardDiscoPins)/sizeof(int))
-#define BOARD_PIN_COUNT (sizeof(boardDPins)/sizeof(int))
 
 #define BOARD_ADC_END (boardAdcPins+BOARD_ADC_COUNT)
 #define BOARD_TOUCH_END (boardTouchPins+BOARD_TOUCH_COUNT)
 #define BOARD_DISCO_END (boardDiscoPins+BOARD_DISCO_COUNT)
-#define BOARD_PIN_END (boardDPins+BOARD_PIN_COUNT)
+
+// Take a default GPIO mask if the board didn't define one.
+#ifndef KESP_GPIO_VALID_GPIO_MASK
+#define KESP_GPIO_VALID_GPIO_MASK SOC_GPIO_VALID_GPIO_MASK
+#endif
+
+// Determine if a pin should be avoided/excluded for this board.
+#define GPIO_AVOID(p) (p >= SOC_GPIO_PIN_COUNT || p < 0 || ((KESP_GPIO_VALID_GPIO_MASK & (1ULL << p)) == 0))
 
 // Limits
 #define CMD_LEN       256
@@ -176,13 +165,28 @@ void parseCommand(char* line, char** argv, uint8_t* argc) {
 // DAC: 25, 26  PWM: any output pin  Touch: 0,2,4,12-15,27,32,33
 int resolvePin(const char* name) {
   if (!name) return -1;
-  if ((name[0] == 'D' || name[0] == 'd') && name[1]) return safeAtoi(name + 1);
-  if (name[0] >= '0' && name[0] <= '9') return safeAtoi(name);
-  if ((name[0] == 'A' || name[0] == 'a') && name[1] >= '0' && name[1] <= '9') {
-    // Logical Ax -> GPIO mapping (common ESP32 breakout)
-    int ch = name[1] - '0';
-    return (ch < 10) ? boardAMap[ch] : -1;
+  int ch = -2;
+  // D prefix -> plain pin number
+  if ((name[0] == 'D' || name[0] == 'd') && name[1]) { ch = safeAtoi(name + 1); }
+  // No prefix -> plain pin number
+  else if (name[0] >= '0' && name[0] <= '9') { ch = safeAtoi(name); }
+  // A prefix -> transslate to a pin number (analog input)
+  else if ((name[0] == 'A' || name[0] == 'a') && name[1]) {
+    ch = safeAtoi(name + 1);
+    ch = (ch < BOARD_ADC_COUNT) ? boardAdcPins[ch] : -1;
   }
+  // T prefix -> translate to a pin number (touch input)
+  else if ((name[0] == 'T' || name[0] == 't') && name[1]) {
+    ch = safeAtoi(name + 1);
+    ch = (ch < BOARD_TOUCH_COUNT) ? boardTouchPins[ch] : -1;
+  }
+
+  // We completed a translation; mask out any forbidden pins.
+  if (ch > -2) {
+    return GPIO_AVOID(ch) ? -1 : ch;
+  }
+
+  // We did not complete a translation, keep parsing...
 #ifdef LED_BUILTIN
   if (strcasecmp(name, "LED") == 0) return LED_BUILTIN;   // Built-in LED most boards
 #endif
@@ -309,10 +313,11 @@ void cmdDigitalRead(char** argv, uint8_t argc) {
     Serial.println(F("\n  " YELLOW "GPIO State:" RESET "  (output-capable: 0-33, input-only: 34-39)\n"));
     Serial.println(F("  Pin  State   │  Pin  State"));
     Serial.println(F("  ─────────────┼─────────────"));
-    for (int i = 0; i < BOARD_PIN_COUNT; i++) {
-      int p = boardDPins[i];
-      int v = digitalRead(p);
-      Serial.printf("  GPIO%-2d  %s%-5s" RESET, p, v ? GREEN : GRAY, v ? "HIGH" : "LOW");
+    for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
+      // Skip pins we shouldn't use.
+      if (GPIO_AVOID(i)) { continue; }
+      int v = digitalRead(i);
+      Serial.printf("  GPIO%-2d  %s%-5s" RESET, i, v ? GREEN : GRAY, v ? "HIGH" : "LOW");
       if (i % 2 == 0) Serial.print("  │");
       else Serial.println();
     }
@@ -330,10 +335,12 @@ void cmdAnalogRead(char** argv, uint8_t argc) {
   if (argc < 2) {
     Serial.println(F("\n  " YELLOW "ADC Channels:" RESET "\n"));
     for (int i = 0; i < BOARD_ADC_COUNT; i++) {
+      // Skip any pins we shouldn't use.
+      if (GPIO_AVOID(i)) { continue; }
       int raw = analogRead(boardAdcPins[i]);
       float v  = raw * 3.3f / 4095.0f;
       int bar  = map(raw, 0, 4095, 0, 30);
-      Serial.printf("  %-12s [", boardAdcNames[i]);
+      Serial.printf("  A%-2d/GPIO%-2d [", i, boardAdcPins[i]);
       for (int b = 0; b < 30; b++) Serial.print(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
       Serial.printf("] %4d (%.2fV)\n", raw, v);
     }
@@ -380,10 +387,12 @@ void cmdTouch(char** argv, uint8_t argc) {
   if (argc < 2) {
     Serial.println(F("\n  " YELLOW "Touch Sensor Readings:" RESET "\n"));
     for (int i = 0; i < BOARD_TOUCH_COUNT; i++) {
+      // Skip any pins we shouldn't use.
+      if (GPIO_AVOID(i)) { continue; }
       uint16_t val = touchRead(boardTouchPins[i]);
       int bar = map(constrain(val, 0, 80), 0, 80, 30, 0);
       bool touched = val < 30;
-      Serial.printf("  %-12s [", boardTouchNames[i]);
+      Serial.printf("  T%-2d/GPIO%-2d [", i, boardTouchPins[i]);
       for (int b = 0; b < 30; b++)
         Serial.print(b < bar ? (touched ? RED "█" RESET : CYAN "█" RESET) : GRAY "░" RESET);
       Serial.printf("] %3d  %s\n", val, touched ? RED "<TOUCH>" RESET : "");
@@ -488,12 +497,14 @@ void cmdMorse(char** argv, uint8_t argc) {
 void cmdSensor(char** argv, uint8_t argc) {
   Serial.println(F("\n  " YELLOW "Sensor Monitor (ADC — 3.3V ref, 12-bit)" RESET "\n"));
   for (int i = 0; i < BOARD_ADC_COUNT; i++) {
+    // Skip any pins we shouldn't use.
+    if (GPIO_AVOID(i)) { continue; }
     long sum = 0;
     for (int j = 0; j < 8; j++) { sum += analogRead(boardAdcPins[i]); delay(1); }
     int avg = sum / 8;
     float v  = avg * 3.3f / 4095.0f;
     int bar  = map(avg, 0, 4095, 0, 32);
-    Serial.printf("  %-12s [", boardAdcNames[i]);
+    Serial.printf("  A%-2d/GPIO%-2d [", i, boardAdcPins[i]);
     for (int b = 0; b < 32; b++) Serial.print(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
     Serial.printf("] %4d (%.2fV)\n", avg, v);
   }
