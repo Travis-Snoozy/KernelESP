@@ -1212,9 +1212,11 @@ void setup() {
   bootTime = millis();
 
   // Brief boot flash on GPIO2 (built-in LED most boards)
-  pinMode(2, OUTPUT);
-  for (int i = 0; i < 6; i++) { digitalWrite(2, !digitalRead(2)); delay(60); }
-  digitalWrite(2, LOW);
+  #ifdef LED_BUILTIN
+  pinMode(LED_BUILTIN, OUTPUT);
+  for (int i = 0; i < 6; i++) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(60); }
+  digitalWrite(LED_BUILTIN, LOW);
+  #endif
 
   initFilesystem();
 
