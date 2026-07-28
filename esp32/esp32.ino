@@ -56,10 +56,12 @@ const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 2
 #define BOARD_ADC_COUNT (sizeof(boardAdcPins)/sizeof(int))
 #define BOARD_TOUCH_COUNT (sizeof(boardTouchPins)/sizeof(int))
 #define BOARD_DISCO_COUNT (sizeof(boardDiscoPins)/sizeof(int))
+#define BOARD_PIN_COUNT (sizeof(boardDPins)/sizeof(int))
 
 #define BOARD_ADC_END (boardAdcPins+BOARD_ADC_COUNT)
 #define BOARD_TOUCH_END (boardTouchPins+BOARD_TOUCH_COUNT)
 #define BOARD_DISCO_END (boardDiscoPins+BOARD_DISCO_COUNT)
+#define BOARD_PIN_END (boardDPins+BOARD_PIN_COUNT)
 
 // Limits
 #define CMD_LEN       256
@@ -307,7 +309,7 @@ void cmdDigitalRead(char** argv, uint8_t argc) {
     Serial.println(F("\n  " YELLOW "GPIO State:" RESET "  (output-capable: 0-33, input-only: 34-39)\n"));
     Serial.println(F("  Pin  State   │  Pin  State"));
     Serial.println(F("  ─────────────┼─────────────"));
-    for (int i = 0; i < 23; i++) {
+    for (int i = 0; i < BOARD_PIN_COUNT; i++) {
       int p = boardDPins[i];
       int v = digitalRead(p);
       Serial.printf("  GPIO%-2d  %s%-5s" RESET, p, v ? GREEN : GRAY, v ? "HIGH" : "LOW");
