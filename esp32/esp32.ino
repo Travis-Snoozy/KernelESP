@@ -57,6 +57,10 @@ const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 2
 #define BOARD_TOUCH_COUNT (sizeof(boardTouchPins)/sizeof(int))
 #define BOARD_DISCO_COUNT (sizeof(boardDiscoPins)/sizeof(int))
 
+#define BOARD_ADC_END (boardAdcPins+BOARD_ADC_COUNT)
+#define BOARD_TOUCH_END (boardTouchPins+BOARD_TOUCH_COUNT)
+#define BOARD_DISCO_END (boardDiscoPins+BOARD_DISCO_COUNT)
+
 // Limits
 #define CMD_LEN       256
 #define MAX_ARGS      16
@@ -540,7 +544,7 @@ void cmdMonitor(char** argv, uint8_t argc) {
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int interval = max(50, safeAtoi(argv[2]));
   int duration = (argc >= 4) ? constrain(safeAtoi(argv[3]), 1, 300) : 10;
-  bool isADC   = (pin == 36||pin==39||pin==34||pin==35||pin==32||pin==33||pin==25||pin==26||pin==27||pin==14);
+  bool isADC   = (std::find(boardAdcPins, BOARD_ADC_END, pin) < BOARD_ADC_END);
 
   Serial.printf("\n  " YELLOW "Monitor GPIO%d" RESET " every %dms for %ds\n\n", pin, interval, duration);
   unsigned long end = millis() + duration * 1000UL;
