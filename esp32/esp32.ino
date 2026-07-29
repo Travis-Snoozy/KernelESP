@@ -26,6 +26,7 @@
 const int boardAdcPins[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17};
 const int boardTouchPins[] = {T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14};
 const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 17, 18, 21};
+const int boardDacPins[] = {};
 #endif
 
 // Fallback (original "ESP32 WROOM" values)
@@ -34,15 +35,18 @@ const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 17, 18, 21};
 const int boardAdcPins[] = {36, 39, 34, 35, 32, 33, 25, 26, 27, 14};
 const int boardTouchPins[] = {4, 0, 2, 15, 13, 12, 14, 27, 33, 32};
 const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23};
+const int boardDacPins[] = {DAC1, DAC2};
 #endif
 
 #define BOARD_ADC_COUNT (sizeof(boardAdcPins)/sizeof(int))
 #define BOARD_TOUCH_COUNT (sizeof(boardTouchPins)/sizeof(int))
 #define BOARD_DISCO_COUNT (sizeof(boardDiscoPins)/sizeof(int))
+#define BOARD_DAC_COUNT (sizeof(boardDacPins)/sizeof(int))
 
 #define BOARD_ADC_END (boardAdcPins+BOARD_ADC_COUNT)
 #define BOARD_TOUCH_END (boardTouchPins+BOARD_TOUCH_COUNT)
 #define BOARD_DISCO_END (boardDiscoPins+BOARD_DISCO_COUNT)
+#define BOARD_DAC_END (boardDacPins+BOARD_DAC_COUNT)
 
 // Take a default GPIO mask if the board didn't define one.
 #ifndef KESP_GPIO_VALID_GPIO_MASK
@@ -77,11 +81,22 @@ const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 2
 #define BYELLOW "\033[93m"
 #define BCYAN   "\033[96m"
 
+// Pin management
+typedef uint8_t pinCap_t;
+#define PC_DIN    (1 << 0)
+#define PC_DOUT   (1 << 1)
+#define PC_LEDPWM (1 << 2)
+#define PC_TOUCH  (1 << 3)
+#define PC_ANALOG (1 << 4)
+#define PC_DAC    (1 << 5)
+
 // Global State
 char  inputBuffer[CMD_LEN];
 int   inputLen   = 0;
 char  currentPath[PATH_LEN] = "/";
 unsigned long bootTime;
+pinCap_t  pinCapabilities[SOC_GPIO_PIN_COUNT];
+pinCap_t  pinAssignment[SOC_GPIO_PIN_COUNT];
 
 // Args storage (avoid heap fragmentation)
 char  argStorage[MAX_ARGS][ARG_LEN];
@@ -161,16 +176,48 @@ void parseCommand(char* line, char** argv, uint8_t* argc) {
 }
 
 // Pin Resolution
-// ESP32 GPIO: 0-39 (input-only: 34-39), ADC1: 32-39, ADC2: 0,2,4,12-15,25-27
-// DAC: 25, 26  PWM: any output pin  Touch: 0,2,4,12-15,27,32,33
-int resolvePin(const char* name) {
+void initPins() {
+  for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
+    pinAssignment[i] = 0;
+    pinCapabilities[i] = 0;
+    // Avoid pins get no assignment, and no capabilities.
+    if (GPIO_AVOID(i)) { continue; }
+
+    pinAssignment[i] = PC_DIN;   // All pins start as digital inputs.
+    pinCapabilities[i] = PC_DIN; // All pins are valid digital inputs.
+    // Mark pins capable of digital output.
+    if (GPIO_IS_VALID_OUTPUT_GPIO(i)) {
+      // All pins capable of digital output are also capable of LED PWM
+      pinCapabilities[i] |= PC_DOUT;
+      pinCapabilities[i] |= PC_LEDPWM;
+    }
+  }
+
+  for (int i = 0; i < BOARD_ADC_COUNT; i++) {
+      // Only add PC_ANALOG to un-avoided pins
+      pinCapabilities[i] |= pinCapabilities[i] ? PC_ANALOG : 0;
+  }
+
+  for (int i = 0; i < BOARD_TOUCH_COUNT; i++) {
+      // Only add PC_TOUCH to un-avoided pins
+      pinCapabilities[i] |= pinCapabilities[i] ? PC_TOUCH : 0;
+  }
+
+  for (int i = 0; i < BOARD_DAC_COUNT; i++) {
+    // Only add PC_DAC to un-avoided pins
+    pinCapabilities[i] |= pinCapabilities[i] ? PC_DAC : 0;
+  }
+}
+
+// Handle converting names to pin numbers (An, Tn, DACn), and checking
+// if a given pin has any of the requested capabilities (output, ADC, 
+// PWM, touch)
+int resolvePin(const char* name, uint32_t capability_mask = 0xFFFFFFFF) {
   if (!name) return -1;
   int ch = -2;
-  // D prefix -> plain pin number
-  if ((name[0] == 'D' || name[0] == 'd') && name[1]) { ch = safeAtoi(name + 1); }
   // No prefix -> plain pin number
-  else if (name[0] >= '0' && name[0] <= '9') { ch = safeAtoi(name); }
-  // A prefix -> transslate to a pin number (analog input)
+  if (name[0] >= '0' && name[0] <= '9') { ch = safeAtoi(name); }
+  // A prefix -> translate to a pin number (analog input)
   else if ((name[0] == 'A' || name[0] == 'a') && name[1]) {
     ch = safeAtoi(name + 1);
     ch = (ch < BOARD_ADC_COUNT) ? boardAdcPins[ch] : -1;
@@ -180,19 +227,28 @@ int resolvePin(const char* name) {
     ch = safeAtoi(name + 1);
     ch = (ch < BOARD_TOUCH_COUNT) ? boardTouchPins[ch] : -1;
   }
+  else if (
+               (name [0] == 'D' || name[0] == 'd') &&
+    name[1] && (name[1] == 'A' || name[1] == 'a') &&
+    name[2] && (name[2] == 'C' || name[2] == 'c') &&
+    name[3]) {
+      ch = safeAtoi(name + 3);
+      ch = (ch < BOARD_DAC_COUNT) ? boardDacPins[ch] : -1;
+  }
+
+  // Bail out if we know we have an invalid pin
+  if (ch == -1) { return -1; }
+
 
   // We completed a translation; mask out any forbidden pins.
-  if (ch > -2) {
-    return GPIO_AVOID(ch) ? -1 : ch;
+  if (ch >= 0) {
+    return ((pinAssignment[ch] & capability_mask) == 0) ? -1 : ch;
   }
 
   // We did not complete a translation, keep parsing...
+  // Note this is NOT typed or managed the way other outputs are!
 #ifdef LED_BUILTIN
   if (strcasecmp(name, "LED") == 0) return LED_BUILTIN;   // Built-in LED most boards
-#endif
-#ifdef SOC_DAC_SUPPORTED
-  if (strcasecmp(name, "DAC1") == 0) return DAC1;
-  if (strcasecmp(name, "DAC2") == 0) return DAC2;
 #endif
   return -1;
 }
@@ -285,21 +341,65 @@ void printPrompt() {
 
 // Hardware Commands
 void cmdPinMode(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: pinmode <pin> <input|output|pullup|pulldown>")); return; }
+  if (argc < 3) { Serial.println(F("Usage: pinmode <pin> <input|output|pullup|pulldown|analog|touch|ledpwm|dac>")); return; }
   int pin = resolvePin(argv[1]);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   String m = String(argv[2]); m.toLowerCase();
-  if (m == "output" || m == "out")           { pinMode(pin, OUTPUT);        Serial.printf("GPIO%d → OUTPUT\n", pin); }
-  else if (m == "input")                      { pinMode(pin, INPUT);         Serial.printf("GPIO%d → INPUT\n", pin); }
-  else if (m == "pullup"   || m == "input_pullup")   { pinMode(pin, INPUT_PULLUP);  Serial.printf("GPIO%d → INPUT_PULLUP\n", pin); }
-  else if (m == "pulldown" || m == "input_pulldown") { pinMode(pin, INPUT_PULLDOWN);Serial.printf("GPIO%d → INPUT_PULLDOWN\n", pin); }
+  if (m == "output" || m == "out") {
+    if ((pinCapabilities[pin] & PC_DOUT) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_DOUT;
+    pinMode(pin, OUTPUT);
+    Serial.printf("GPIO%d → OUTPUT\n", pin);
+  }
+  else if (m == "input") {
+    if ((pinCapabilities[pin] & PC_DIN) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_DIN;
+    pinMode(pin, INPUT);
+    Serial.printf("GPIO%d → INPUT\n", pin);
+  }
+  else if (m == "pullup"   || m == "input_pullup") {
+    if ((pinCapabilities[pin] & PC_DIN) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_DIN;
+    pinMode(pin, INPUT_PULLUP);
+    Serial.printf("GPIO%d → INPUT_PULLUP\n", pin);
+  }
+  else if (m == "pulldown" || m == "input_pulldown") {
+    if ((pinCapabilities[pin] & PC_DIN) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_DIN;
+    pinMode(pin, INPUT_PULLDOWN);
+    Serial.printf("GPIO%d → INPUT_PULLDOWN\n", pin);
+  }
+  else if (m == "analog") {
+    if ((pinCapabilities[pin] & PC_ANALOG) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_ANALOG;
+    analogRead(pin);
+    Serial.printf("GPIO%d → ANALOG INPUT\n", pin);
+  }
+  else if (m == "touch") {
+    if ((pinCapabilities[pin] & PC_TOUCH) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_TOUCH;
+    touchRead(pin);
+    Serial.printf("GPIO%d → TOUCH INPUT\n", pin);
+  }
+  else if (m == "ledpwm") {
+    if ((pinCapabilities[pin] & PC_LEDPWM) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_LEDPWM;
+    pinMode(pin, OUTPUT);
+    Serial.printf("GPIO%d → LED PWM OUTPUT\n", pin);
+  }
+  else if (m == "dac") {
+    if ((pinCapabilities[pin] & PC_DAC) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
+    pinAssignment[pin] = PC_DAC;
+    pinMode(pin, OUTPUT);
+    Serial.printf("GPIO%d → ANALOG OUTPUT\n", pin);
+  }
   else { Serial.println(RED "Unknown mode" RESET); return; }
   char buf[48]; snprintf(buf, sizeof(buf), "pinMode GPIO%d %s", pin, argv[2]); klog(buf);
 }
 
 void cmdDigitalWrite(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: write <pin> <HIGH|LOW|1|0|on|off>")); return; }
-  int pin = resolvePin(argv[1]);
+  int pin = resolvePin(argv[1], PC_DOUT);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   String v = String(argv[2]); v.toLowerCase();
   int val = (v == "high" || v == "1" || v == "on") ? HIGH : LOW;
@@ -310,24 +410,26 @@ void cmdDigitalWrite(char** argv, uint8_t argc) {
 
 void cmdDigitalRead(char** argv, uint8_t argc) {
   if (argc < 2) {
-    Serial.println(F("\n  " YELLOW "GPIO State:" RESET "  (output-capable: 0-33, input-only: 34-39)\n"));
-    Serial.println(F("  Pin  State   │  Pin  State"));
-    Serial.println(F("  ─────────────┼─────────────"));
+    Serial.println(F("\n  " YELLOW "GPIO State:" RESET "\n"));
+    Serial.println(F("  Pin     State  │  Pin  State"));
+    Serial.println(F("  ───────────────┼─────────────"));
+    int printcount = 0;
     for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
-      // Skip pins we shouldn't use.
-      if (GPIO_AVOID(i)) { continue; }
+      // Only display pins configured for digital input or output
+      if ((pinAssignment[i] & (PC_DIN | PC_DOUT)) == 0) { continue; }
       int v = digitalRead(i);
-      Serial.printf("  GPIO%-2d  %s%-5s" RESET, i, v ? GREEN : GRAY, v ? "HIGH" : "LOW");
-      if (i % 2 == 0) Serial.print("  │");
+      Serial.printf("  GPIO%-2d  %s%-5s" RESET, i, v ? ((pinAssignment[i] == PC_DIN) ? GREEN : RED) : ((pinAssignment[i] == PC_DIN) ? GRAY : WHITE), v ? "HIGH" : "LOW");
+      if (printcount % 2 == 0) Serial.print("  │");
       else Serial.println();
+      printcount++;
     }
     Serial.println(F("\n"));
     return;
   }
-  int pin = resolvePin(argv[1]);
+  int pin = resolvePin(argv[1], PC_DIN | PC_DOUT);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int v = digitalRead(pin);
-  Serial.printf("GPIO%d = %s%s" RESET "\n", pin, v ? GREEN : GRAY, v ? "HIGH" : "LOW");
+  Serial.printf("GPIO%d = %s%s" RESET "\n", pin, v ? ((pinAssignment[pin] == PC_DIN) ? GREEN : RED) : ((pinAssignment[pin] == PC_DIN) ? GRAY : WHITE), v ? "HIGH" : "LOW");
 }
 
 void cmdAnalogRead(char** argv, uint8_t argc) {
@@ -336,7 +438,7 @@ void cmdAnalogRead(char** argv, uint8_t argc) {
     Serial.println(F("\n  " YELLOW "ADC Channels:" RESET "\n"));
     for (int i = 0; i < BOARD_ADC_COUNT; i++) {
       // Skip any pins we shouldn't use.
-      if (GPIO_AVOID(i)) { continue; }
+      if ((pinAssignment[boardAdcPins[i]] & PC_ANALOG) == 0) { continue; }
       int raw = analogRead(boardAdcPins[i]);
       float v  = raw * 3.3f / 4095.0f;
       int bar  = map(raw, 0, 4095, 0, 30);
@@ -347,7 +449,7 @@ void cmdAnalogRead(char** argv, uint8_t argc) {
     Serial.println();
     return;
   }
-  int pin = resolvePin(argv[1]);
+  int pin = resolvePin(argv[1], PC_ANALOG);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int raw = analogRead(pin);
   float v  = raw * 3.3f / 4095.0f;
@@ -360,7 +462,7 @@ void cmdPWM(char** argv, uint8_t argc) {
     Serial.println(F("Usage: pwm <pin> <duty 0-255> [freq_hz] [channel 0-15]"));
     return;
   }
-  int pin  = resolvePin(argv[1]);
+  int pin  = resolvePin(argv[1], PC_LEDPWM);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int duty = constrain(safeAtoi(argv[2]), 0, 255);
   int freq = (argc >= 4) ? safeAtoi(argv[3]) : 5000;
@@ -374,8 +476,8 @@ void cmdPWM(char** argv, uint8_t argc) {
 #ifdef SOC_DAC_SUPPORTED
 void cmdDAC(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: dac <25|26> <0-255>")); return; }
-  int pin = resolvePin(argv[1]);
-  if (pin != 25 && pin != 26) { Serial.println(RED "DAC only on GPIO25 and GPIO26" RESET); return; }
+  int pin = resolvePin(argv[1], PC_DAC);
+  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int val = constrain(safeAtoi(argv[2]), 0, 255);
   dacWrite(pin, val);
   float v = val * 3.3f / 255.0f;
@@ -387,8 +489,8 @@ void cmdTouch(char** argv, uint8_t argc) {
   if (argc < 2) {
     Serial.println(F("\n  " YELLOW "Touch Sensor Readings:" RESET "\n"));
     for (int i = 0; i < BOARD_TOUCH_COUNT; i++) {
-      // Skip any pins we shouldn't use.
-      if (GPIO_AVOID(i)) { continue; }
+      // Only read out pins configured for touch input
+      if (pinAssignment[boardTouchPins[i]] != PC_TOUCH) { continue; }
       uint16_t val = touchRead(boardTouchPins[i]);
       int bar = map(constrain(val, 0, 80), 0, 80, 30, 0);
       bool touched = val < 30;
@@ -400,7 +502,7 @@ void cmdTouch(char** argv, uint8_t argc) {
     Serial.println();
     return;
   }
-  int pin = resolvePin(argv[1]);
+  int pin = resolvePin(argv[1], PC_TOUCH);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   uint16_t val = touchRead(pin);
   Serial.printf("Touch GPIO%d = %d (%s)\n", pin, val, val < 30 ? RED "TOUCHED" RESET : "not touched");
@@ -408,7 +510,7 @@ void cmdTouch(char** argv, uint8_t argc) {
 
 void cmdTone(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: tone <pin> <freq_hz> [duration_ms]")); return; }
-  int pin  = resolvePin(argv[1]);
+  int pin  = resolvePin(argv[1], PC_LEDPWM);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int freq = safeAtoi(argv[2]);
   if (freq < 1 || freq > 20000) { Serial.println(RED "Frequency: 1-20000 Hz" RESET); return; }
@@ -426,7 +528,7 @@ void cmdTone(char** argv, uint8_t argc) {
 }
 
 void cmdNoTone(char** argv, uint8_t argc) {
-  int pin = (argc >= 2) ? resolvePin(argv[1]) : -1;
+  int pin = (argc >= 2) ? resolvePin(argv[1], PC_LEDPWM) : -1;
   ledcWrite(pin, 0);
   if (pin >= 0) ledcDetach(pin);
   Serial.println("Tone stopped");
@@ -434,7 +536,7 @@ void cmdNoTone(char** argv, uint8_t argc) {
 
 void cmdGPIO(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: gpio <pin> <on|off|toggle|read>")); return; }
-  int pin = resolvePin(argv[1]);
+  int pin = resolvePin(argv[1], PC_DOUT);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   String act = String(argv[2]); act.toLowerCase();
   if (act == "on"  || act == "1" || act == "high") { pinMode(pin, OUTPUT); digitalWrite(pin, HIGH); Serial.printf("GPIO%d → ON\n", pin); }
@@ -470,7 +572,7 @@ void cmdDisco(char** argv, uint8_t argc) {
 
 void cmdMorse(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: morse <pin> <MESSAGE>")); return; }
-  int pin = resolvePin(argv[1]);
+  int pin = resolvePin(argv[1], PC_DOUT);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   pinMode(pin, OUTPUT); digitalWrite(pin, LOW);
   const char* mt[] = {".-","-...","-.-.","-..",".","..-.","--.","....","..",".---","-.-",".-..","--","-.","---",".--.","--.-",".-.","...","-","..-","...-",".--","-..-","-.--","--.."};
@@ -497,8 +599,8 @@ void cmdMorse(char** argv, uint8_t argc) {
 void cmdSensor(char** argv, uint8_t argc) {
   Serial.println(F("\n  " YELLOW "Sensor Monitor (ADC — 3.3V ref, 12-bit)" RESET "\n"));
   for (int i = 0; i < BOARD_ADC_COUNT; i++) {
-    // Skip any pins we shouldn't use.
-    if (GPIO_AVOID(i)) { continue; }
+    // Only read out pins configured for analog input
+    if (pinAssignment[boardAdcPins[i]] != PC_ANALOG) { continue; }
     long sum = 0;
     for (int j = 0; j < 8; j++) { sum += analogRead(boardAdcPins[i]); delay(1); }
     int avg = sum / 8;
@@ -513,7 +615,7 @@ void cmdSensor(char** argv, uint8_t argc) {
 
 void cmdScope(char** argv, uint8_t argc) {
   if (argc < 2) { Serial.println(F("Usage: scope <pin> [samples=80] [delay_ms=5]")); return; }
-  int pin     = resolvePin(argv[1]);
+  int pin     = resolvePin(argv[1], PC_ANALOG);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int samples = (argc >= 3) ? constrain(safeAtoi(argv[2]), 10, 200) : 80;
   int dly     = (argc >= 4) ? constrain(safeAtoi(argv[3]), 1, 500)  : 5;
@@ -553,17 +655,16 @@ void cmdScope(char** argv, uint8_t argc) {
 
 void cmdMonitor(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: monitor <pin> <interval_ms> [duration_s=10]")); return; }
-  int pin      = resolvePin(argv[1]);
+  int pin      = resolvePin(argv[1], PC_ANALOG | PC_DIN);
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int interval = max(50, safeAtoi(argv[2]));
   int duration = (argc >= 4) ? constrain(safeAtoi(argv[3]), 1, 300) : 10;
-  bool isADC   = (std::find(boardAdcPins, BOARD_ADC_END, pin) < BOARD_ADC_END);
 
   Serial.printf("\n  " YELLOW "Monitor GPIO%d" RESET " every %dms for %ds\n\n", pin, interval, duration);
   unsigned long end = millis() + duration * 1000UL;
   while (millis() < end) {
     unsigned long t = (millis() - bootTime) / 1000;
-    if (isADC) {
+    if (pinAssignment[pin] == PC_ANALOG) {
       int raw = analogRead(pin);
       float v = raw * 3.3f / 4095.0f;
       Serial.printf("  [t+%lus] %d (%.3fV)\n", t, raw, v);
@@ -573,6 +674,33 @@ void cmdMonitor(char** argv, uint8_t argc) {
     delay(interval);
   }
   Serial.println(GREEN "  Monitor done" RESET "\n");
+}
+
+void cmdPins(char** argv, uint8_t argc) {
+  Serial.println("\n  " YELLOW "Pin configuration:" RESET);
+  Serial.println("  Pin    │ Capabilities │ Mode");
+  Serial.println("  ───────┼──────────────┼───────────────");
+  for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
+    // Skip disabled/unavailable pins
+    if (pinAssignment[i] == 0) { continue; }
+    const char* mode;
+    switch(pinAssignment[i]) {
+      case PC_DIN: mode = "Digital input"; break;
+      case PC_DOUT: mode = "Digital output"; break;
+      case PC_LEDPWM: mode = "LED PWM output"; break;
+      case PC_TOUCH: mode = "Touch input"; break;
+      case PC_ANALOG: mode = "Analog input"; break;
+      default: mode = RED "ERROR" RESET; break;
+    }
+    Serial.printf("  GPIO%-2d │ %si%so%sl%st%sa" RESET "        │ %s\n",
+      i,
+      (pinCapabilities[i] & PC_DIN) ? GREEN : GRAY,
+      (pinCapabilities[i] & PC_DOUT) ? GREEN : GRAY,
+      (pinCapabilities[i] & PC_LEDPWM) ? GREEN : GRAY,
+      (pinCapabilities[i] & PC_TOUCH) ? GREEN : GRAY,
+      (pinCapabilities[i] & PC_ANALOG) ? GREEN : GRAY,
+      mode);
+  }
 }
 
 // Filesystem Commands
@@ -1093,7 +1221,10 @@ void cmdHelp(char** argv, uint8_t argc) {
   Serial.println(F("\n  " CYAN "KernelESP v1.0 Command Reference" RESET "\n"));
 
   Serial.println(F("  " GREEN "Hardware:" RESET));
-  Serial.println(F("    pinmode <pin> <mode>         Set GPIO mode (input/output/pullup/pulldown)"));
+  Serial.println(F("    pins                          Show current pin configuration"));
+  Serial.println(F("    pinmode <pin> <mode>          Set pin mode"));
+  Serial.println(F("                                  (input/output/pullup/pulldown/"));
+  Serial.println(F("                                  analog/touch/ledpwm/dac)"));
   Serial.println(F("    write   <pin> <HIGH|LOW>      Digital write"));
   Serial.println(F("    read    [pin]                 Digital read (all if no pin)"));
   Serial.println(F("    aread   [pin]                 ADC read (0-4095, 3.3V)"));
@@ -1136,9 +1267,6 @@ void cmdHelp(char** argv, uint8_t argc) {
   Serial.println(F("\n  " GREEN "System:" RESET));
   Serial.println(F("    sysinfo / neofetch   uptime   free   df   dmesg"));
   Serial.println(F("    whoami   uname   echo <text>   clear   wave   reboot\n"));
-
-  Serial.println(F("  " GRAY "Pins: GPIO0-39 (output: 0-33, input-only: 34-39)"));
-  Serial.println(F("  " GRAY "ADC:  GPIO32-39 (ADC1)  DAC: GPIO25-26" RESET "\n"));
 }
 
 // Main Command Router
@@ -1175,6 +1303,7 @@ void executeCommand(char* line) {
   else if (!strcmp(cmd,"sensor"))                           cmdSensor(args, argc);
   else if (!strcmp(cmd,"scope"))                            cmdScope(args, argc);
   else if (!strcmp(cmd,"monitor"))                          cmdMonitor(args, argc);
+  else if (!strcmp(cmd,"pins"))                             cmdPins(args, argc);
 
   // Filesystem
   else if (!strcmp(cmd,"ls")    || !strcmp(cmd,"dir"))      cmdLS(args, argc);
@@ -1228,6 +1357,8 @@ void setup() {
   for (int i = 0; i < 6; i++) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(60); }
   digitalWrite(LED_BUILTIN, LOW);
   #endif
+
+  initPins();
 
   initFilesystem();
 
