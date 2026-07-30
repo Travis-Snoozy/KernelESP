@@ -14,6 +14,7 @@
 #include <driver/touch_pad.h>
 #include <string.h>
 #include <stdlib.h>
+#include <algorithm>
 
 // Boards
 #ifdef ARDUINO_ESP32S3_DEV
