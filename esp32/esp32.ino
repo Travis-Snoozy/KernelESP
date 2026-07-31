@@ -14,6 +14,55 @@
 #include <driver/touch_pad.h>
 #include <string.h>
 #include <stdlib.h>
+#include <algorithm>
+
+// Boards
+#ifdef ARDUINO_ESP32S3_DEV
+#define KESP_BOARD_SET
+const int boardAMap[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9};
+// Avoid the pins used for PSRAM, Flash, UART0, and USB, which we might be using
+// TODO: be smarter about including/excluding those pins based on further config defines
+const int boardDPins[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,17,18,21,38,39,40,41,42,45,46,47,48};
+// Avoid the pins for UART0 and USB
+const int boardAdcPins[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A16, A17};
+const char* boardAdcNames[] = {"A0/GPIO1","A1/GPIO2","A2/GPIO3",
+                               "A3/GPIO4","A4/GPIO5","A5/GPIO6",
+                               "A6/GPIO7","A7/GPIO8","A8/GPIO9",
+                               "A9/GPIO10","A10/GPIO11","A11/GPIO12",
+                               "A12/GPIO13","A13/GPIO14","A16/GPIO17",
+                               "A17/GPIO18"};
+const int boardTouchPins[] = {T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14};
+const char* boardTouchNames[] = {"T1/GPIO1","T2/GPIO2","T3/GPIO3",
+                                 "T4/GPIO4","T5/GPIO5","T6/GPIO6",
+                                 "T7/GPIO7","T8/GPIO8","T9/GPIO9",
+                                 "T10/GPIO10","T11/GPIO11","T12/GPIO12",
+                                 "T13/GPIO13","T14/GPIO14"};
+const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 17, 18, 21};
+#endif
+
+// Fallback (original "ESP32 WROOM" values)
+#ifndef KESP_BOARD_SET
+const int boardAMap[] = {36, 39, 34, 35, 32, 33, 25, 26, 27, 14};
+const int boardDPins[] = {2,4,5,12,13,14,15,16,17,18,19,21,22,23,25,26,27,32,33,34,35,36,39};
+const int boardAdcPins[] = {36, 39, 34, 35, 32, 33};
+const char* boardAdcNames[] = {"A0/GPIO36","A1/GPIO39","A2/GPIO34",
+                               "A3/GPIO35","A4/GPIO32","A5/GPIO33"};
+const int boardTouchPins[] = {4, 0, 2, 15, 13, 12, 14, 27, 33, 32};
+const char* boardTouchNames[] = {"T0/GPIO4","T1/GPIO0","T2/GPIO2","T3/GPIO15",
+                        "T4/GPIO13","T5/GPIO12","T6/GPIO14","T7/GPIO27",
+                        "T8/GPIO33","T9/GPIO32"};
+const int boardDiscoPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23};
+#endif
+
+#define BOARD_ADC_COUNT (sizeof(boardAdcPins)/sizeof(int))
+#define BOARD_TOUCH_COUNT (sizeof(boardTouchPins)/sizeof(int))
+#define BOARD_DISCO_COUNT (sizeof(boardDiscoPins)/sizeof(int))
+#define BOARD_PIN_COUNT (sizeof(boardDPins)/sizeof(int))
+
+#define BOARD_ADC_END (boardAdcPins+BOARD_ADC_COUNT)
+#define BOARD_TOUCH_END (boardTouchPins+BOARD_TOUCH_COUNT)
+#define BOARD_DISCO_END (boardDiscoPins+BOARD_DISCO_COUNT)
+#define BOARD_PIN_END (boardDPins+BOARD_PIN_COUNT)
 
 // Limits
 #define CMD_LEN       256
@@ -132,13 +181,16 @@ int resolvePin(const char* name) {
   if (name[0] >= '0' && name[0] <= '9') return safeAtoi(name);
   if ((name[0] == 'A' || name[0] == 'a') && name[1] >= '0' && name[1] <= '9') {
     // Logical Ax -> GPIO mapping (common ESP32 breakout)
-    const int amap[] = {36, 39, 34, 35, 32, 33, 25, 26, 27, 14};
     int ch = name[1] - '0';
-    return (ch < 10) ? amap[ch] : -1;
+    return (ch < 10) ? boardAMap[ch] : -1;
   }
-  if (strcasecmp(name, "LED") == 0) return 2;   // Built-in LED most boards
-  if (strcasecmp(name, "DAC1") == 0) return 25;
-  if (strcasecmp(name, "DAC2") == 0) return 26;
+#ifdef LED_BUILTIN
+  if (strcasecmp(name, "LED") == 0) return LED_BUILTIN;   // Built-in LED most boards
+#endif
+#ifdef SOC_DAC_SUPPORTED
+  if (strcasecmp(name, "DAC1") == 0) return DAC1;
+  if (strcasecmp(name, "DAC2") == 0) return DAC2;
+#endif
   return -1;
 }
 
@@ -201,7 +253,7 @@ void showLogo() {
   // System info bar
   uint32_t heap = ESP.getFreeHeap();
   uint32_t flash = ESP.getFlashChipSize() / 1024;
-  Serial.printf(GRAY "  CPU: " WHITE "Xtensa LX6 @ %dMHz  " GRAY
+  Serial.printf(GRAY "  Board: " WHITE ARDUINO_BOARD" @ %dMHz  " GRAY
                 "RAM: " WHITE "%u KB free  " GRAY
                 "Flash: " WHITE "%u KB" RESET "\n",
                 ESP.getCpuFreqMHz(), heap / 1024, flash);
@@ -258,9 +310,8 @@ void cmdDigitalRead(char** argv, uint8_t argc) {
     Serial.println(F("\n  " YELLOW "GPIO State:" RESET "  (output-capable: 0-33, input-only: 34-39)\n"));
     Serial.println(F("  Pin  State   │  Pin  State"));
     Serial.println(F("  ─────────────┼─────────────"));
-    const int pins[] = {2,4,5,12,13,14,15,16,17,18,19,21,22,23,25,26,27,32,33,34,35,36,39};
-    for (int i = 0; i < 23; i++) {
-      int p = pins[i];
+    for (int i = 0; i < BOARD_PIN_COUNT; i++) {
+      int p = boardDPins[i];
       int v = digitalRead(p);
       Serial.printf("  GPIO%-2d  %s%-5s" RESET, p, v ? GREEN : GRAY, v ? "HIGH" : "LOW");
       if (i % 2 == 0) Serial.print("  │");
@@ -279,13 +330,11 @@ void cmdAnalogRead(char** argv, uint8_t argc) {
   // ADC on ESP32: 12-bit (0-4095), 3.3V reference
   if (argc < 2) {
     Serial.println(F("\n  " YELLOW "ADC Channels:" RESET "\n"));
-    const int adcPins[] = {36, 39, 34, 35, 32, 33};
-    const char* adcNames[] = {"A0/GPIO36","A1/GPIO39","A2/GPIO34","A3/GPIO35","A4/GPIO32","A5/GPIO33"};
-    for (int i = 0; i < 6; i++) {
-      int raw = analogRead(adcPins[i]);
+    for (int i = 0; i < BOARD_ADC_COUNT; i++) {
+      int raw = analogRead(boardAdcPins[i]);
       float v  = raw * 3.3f / 4095.0f;
       int bar  = map(raw, 0, 4095, 0, 30);
-      Serial.printf("  %-12s [", adcNames[i]);
+      Serial.printf("  %-12s [", boardAdcNames[i]);
       for (int b = 0; b < 30; b++) Serial.print(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
       Serial.printf("] %4d (%.2fV)\n", raw, v);
     }
@@ -310,13 +359,13 @@ void cmdPWM(char** argv, uint8_t argc) {
   int duty = constrain(safeAtoi(argv[2]), 0, 255);
   int freq = (argc >= 4) ? safeAtoi(argv[3]) : 5000;
   int ch   = (argc >= 5) ? constrain(safeAtoi(argv[4]), 0, 15) : 0;
-  ledcSetup(ch, freq, 8);          // 8-bit resolution
-  ledcAttachPin(pin, ch);
-  ledcWrite(ch, duty);
+  ledcAttachChannel(pin, freq, 8, ch);
+  ledcWrite(pin, duty);
   float pct = duty * 100.0f / 255.0f;
   Serial.printf("GPIO%d PWM ch%d: duty=%d (%.0f%%) freq=%dHz\n", pin, ch, duty, pct, freq);
 }
 
+#ifdef SOC_DAC_SUPPORTED
 void cmdDAC(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: dac <25|26> <0-255>")); return; }
   int pin = resolvePin(argv[1]);
@@ -326,20 +375,16 @@ void cmdDAC(char** argv, uint8_t argc) {
   float v = val * 3.3f / 255.0f;
   Serial.printf("DAC GPIO%d = %d (%.3fV)\n", pin, val, v);
 }
+#endif
 
 void cmdTouch(char** argv, uint8_t argc) {
-  // Touch-capable pins: 0,2,4,12,13,14,15,27,32,33
-  const int touchPins[] = {4, 0, 2, 15, 13, 12, 14, 27, 33, 32};
   if (argc < 2) {
     Serial.println(F("\n  " YELLOW "Touch Sensor Readings:" RESET "\n"));
-    const char* tnames[] = {"T0/GPIO4","T1/GPIO0","T2/GPIO2","T3/GPIO15",
-                             "T4/GPIO13","T5/GPIO12","T6/GPIO14","T7/GPIO27",
-                             "T8/GPIO33","T9/GPIO32"};
-    for (int i = 0; i < 10; i++) {
-      uint16_t val = touchRead(touchPins[i]);
+    for (int i = 0; i < BOARD_TOUCH_COUNT; i++) {
+      uint16_t val = touchRead(boardTouchPins[i]);
       int bar = map(constrain(val, 0, 80), 0, 80, 30, 0);
       bool touched = val < 30;
-      Serial.printf("  %-12s [", tnames[i]);
+      Serial.printf("  %-12s [", boardTouchNames[i]);
       for (int b = 0; b < 30; b++)
         Serial.print(b < bar ? (touched ? RED "█" RESET : CYAN "█" RESET) : GRAY "░" RESET);
       Serial.printf("] %3d  %s\n", val, touched ? RED "<TOUCH>" RESET : "");
@@ -359,15 +404,14 @@ void cmdTone(char** argv, uint8_t argc) {
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int freq = safeAtoi(argv[2]);
   if (freq < 1 || freq > 20000) { Serial.println(RED "Frequency: 1-20000 Hz" RESET); return; }
-  ledcSetup(14, freq, 8);
-  ledcAttachPin(pin, 14);
-  ledcWrite(14, 127); // 50% duty = square wave
+  ledcAttachChannel(pin, freq, 8, 14);
+  ledcWrite(pin, 127); // 50% duty = square wave
   if (argc >= 4) {
     int ms = safeAtoi(argv[3]);
     Serial.printf("Tone GPIO%d: %dHz for %dms\n", pin, freq, ms);
     delay(ms);
-    ledcWrite(14, 0);
-    ledcDetachPin(pin);
+    ledcWrite(pin, 0);
+    ledcDetach(pin);
   } else {
     Serial.printf("Tone GPIO%d: %dHz continuous. Use 'notone %s' to stop.\n", pin, freq, argv[1]);
   }
@@ -375,8 +419,8 @@ void cmdTone(char** argv, uint8_t argc) {
 
 void cmdNoTone(char** argv, uint8_t argc) {
   int pin = (argc >= 2) ? resolvePin(argv[1]) : -1;
-  ledcWrite(14, 0);
-  if (pin >= 0) ledcDetachPin(pin);
+  ledcWrite(pin, 0);
+  if (pin >= 0) ledcDetach(pin);
   Serial.println("Tone stopped");
 }
 
@@ -401,19 +445,18 @@ void cmdGPIO(char** argv, uint8_t argc) {
 void cmdDisco(char** argv, uint8_t argc) {
   int cycles = (argc >= 2) ? constrain(safeAtoi(argv[1]), 1, 30)  : 3;
   int speed  = (argc >= 3) ? constrain(safeAtoi(argv[2]), 5, 500) : 40;
-  const int pins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23};
-  const int nPins  = sizeof(pins) / sizeof(pins[0]);
-  for (int p : pins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
+  const int nPins  = BOARD_DISCO_COUNT;
+  for (int p : boardDiscoPins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   Serial.printf(MAGENTA "  *** DISCO MODE *** " RESET "cycles=%d speed=%dms\n", cycles, speed);
   for (int c = 0; c < cycles; c++) {
-    for (int i = 0; i < nPins; i++) { digitalWrite(pins[i], HIGH); delay(speed); digitalWrite(pins[i], LOW); }
-    for (int i = nPins - 2; i > 0; i--) { digitalWrite(pins[i], HIGH); delay(speed); digitalWrite(pins[i], LOW); }
-    for (int i = 0; i < nPins; i++) { digitalWrite(pins[i], (c + i) % 2); }
+    for (int i = 0; i < nPins; i++) { digitalWrite(boardDiscoPins[i], HIGH); delay(speed); digitalWrite(boardDiscoPins[i], LOW); }
+    for (int i = nPins - 2; i > 0; i--) { digitalWrite(boardDiscoPins[i], HIGH); delay(speed); digitalWrite(boardDiscoPins[i], LOW); }
+    for (int i = 0; i < nPins; i++) { digitalWrite(boardDiscoPins[i], (c + i) % 2); }
     delay(speed * 4);
-    for (int p : pins) digitalWrite(p, LOW);
+    for (int p : boardDiscoPins) digitalWrite(p, LOW);
     Serial.printf("\r  Cycle %d/%d", c + 1, cycles);
   }
-  for (int p : pins) pinMode(p, INPUT);
+  for (int p : boardDiscoPins) pinMode(p, INPUT);
   Serial.println(F("\n  " GREEN "Disco complete!" RESET));
 }
 
@@ -445,15 +488,13 @@ void cmdMorse(char** argv, uint8_t argc) {
 
 void cmdSensor(char** argv, uint8_t argc) {
   Serial.println(F("\n  " YELLOW "Sensor Monitor (ADC — 3.3V ref, 12-bit)" RESET "\n"));
-  const int pins[]  = {36, 39, 34, 35, 32, 33};
-  const char* names[] = {"A0/GPIO36","A1/GPIO39","A2/GPIO34","A3/GPIO35","A4/GPIO32","A5/GPIO33"};
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < BOARD_ADC_COUNT; i++) {
     long sum = 0;
-    for (int j = 0; j < 8; j++) { sum += analogRead(pins[i]); delay(1); }
+    for (int j = 0; j < 8; j++) { sum += analogRead(boardAdcPins[i]); delay(1); }
     int avg = sum / 8;
     float v  = avg * 3.3f / 4095.0f;
     int bar  = map(avg, 0, 4095, 0, 32);
-    Serial.printf("  %-12s [", names[i]);
+    Serial.printf("  %-12s [", boardAdcNames[i]);
     for (int b = 0; b < 32; b++) Serial.print(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
     Serial.printf("] %4d (%.2fV)\n", avg, v);
   }
@@ -506,7 +547,7 @@ void cmdMonitor(char** argv, uint8_t argc) {
   if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
   int interval = max(50, safeAtoi(argv[2]));
   int duration = (argc >= 4) ? constrain(safeAtoi(argv[3]), 1, 300) : 10;
-  bool isADC   = (pin == 36||pin==39||pin==34||pin==35||pin==32||pin==33||pin==25||pin==26||pin==27||pin==14);
+  bool isADC   = (std::find(boardAdcPins, BOARD_ADC_END, pin) < BOARD_ADC_END);
 
   Serial.printf("\n  " YELLOW "Monitor GPIO%d" RESET " every %dms for %ds\n\n", pin, interval, duration);
   unsigned long end = millis() + duration * 1000UL;
@@ -985,8 +1026,8 @@ void cmdSysInfo(char** argv, uint8_t argc) {
 
   Serial.printf("  " YELLOW "OS     " RESET ": KernelESP v1.0\n");
   Serial.printf("  " YELLOW "Host   " RESET ": %s\n", HOSTNAME);
-  Serial.printf("  " YELLOW "CPU    " RESET ": Xtensa LX6 Dual-Core @ %d MHz\n", ESP.getCpuFreqMHz());
-  Serial.printf("  " YELLOW "Chip   " RESET ": ESP32  Rev%d  Cores:%d\n", ESP.getChipRevision(), ESP.getChipCores());
+  Serial.printf("  " YELLOW "Board  " RESET ": "ARDUINO_BOARD" @ %d MHz\n", ESP.getCpuFreqMHz());
+  Serial.printf("  " YELLOW "Chip   " RESET ": %s  Rev%d  Cores:%d\n", ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores());
   Serial.printf("  " YELLOW "Flash  " RESET ": %u KB  (mode:%d  speed:%d MHz)\n",
                 ESP.getFlashChipSize()/1024, ESP.getFlashChipMode(), ESP.getFlashChipSpeed()/1000000);
   Serial.printf("  " YELLOW "RAM    " RESET ": %u KB free / PSRAM: %u KB\n",
@@ -1047,7 +1088,9 @@ void cmdHelp(char** argv, uint8_t argc) {
   Serial.println(F("    read    [pin]                 Digital read (all if no pin)"));
   Serial.println(F("    aread   [pin]                 ADC read (0-4095, 3.3V)"));
   Serial.println(F("    pwm     <pin> <0-255> [freq]  LEDC PWM output"));
+  #ifdef SOC_DAC_SUPPORTED
   Serial.println(F("    dac     <25|26> <0-255>       DAC voltage output"));
+  #endif
   Serial.println(F("    gpio    <pin> <on|off|toggle> Quick GPIO"));
   Serial.println(F("    tone    <pin> <hz> [ms]       Square wave tone"));
   Serial.println(F("    notone  [pin]                 Stop tone"));
@@ -1110,7 +1153,9 @@ void executeCommand(char* line) {
   else if (!strcmp(cmd,"read")   || !strcmp(cmd,"digitalread"))  cmdDigitalRead(args, argc);
   else if (!strcmp(cmd,"aread")  || !strcmp(cmd,"analogread"))   cmdAnalogRead(args, argc);
   else if (!strcmp(cmd,"pwm"))                              cmdPWM(args, argc);
+  #ifdef SOC_DAC_SUPPORTED
   else if (!strcmp(cmd,"dac"))                              cmdDAC(args, argc);
+  #endif
   else if (!strcmp(cmd,"gpio"))                             cmdGPIO(args, argc);
   else if (!strcmp(cmd,"tone"))                             cmdTone(args, argc);
   else if (!strcmp(cmd,"notone"))                           cmdNoTone(args, argc);
@@ -1168,9 +1213,11 @@ void setup() {
   bootTime = millis();
 
   // Brief boot flash on GPIO2 (built-in LED most boards)
-  pinMode(2, OUTPUT);
-  for (int i = 0; i < 6; i++) { digitalWrite(2, !digitalRead(2)); delay(60); }
-  digitalWrite(2, LOW);
+  #ifdef LED_BUILTIN
+  pinMode(LED_BUILTIN, OUTPUT);
+  for (int i = 0; i < 6; i++) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(60); }
+  digitalWrite(LED_BUILTIN, LOW);
+  #endif
 
   initFilesystem();
 
