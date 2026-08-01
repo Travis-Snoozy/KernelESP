@@ -6,6 +6,7 @@
 
 #include <Arduino.h>
 #include <Console.h>
+#include "argtable3/argtable3.h"
 #include <WiFi.h>
 #include <SPIFFS.h>
 #include <WebServer.h>
@@ -175,6 +176,21 @@ void parseCommand(char* line, char** argv, uint8_t* argc) {
     argv[(*argc)++] = dst;
   }
 }
+
+// Command line parsing boilerplate for cmd* functions
+#define CMD_HEADER(x)   x args; \
+  int retval = 0; \
+  setCmdForArgs(args); \
+  if (arg_parse(argc, argv, (void**)&args) != 0) { \
+    arg_print_errors(stderr, args.end, argv[0]); \
+    retval = -1; \
+    goto DEALLOC; \
+  }
+
+// End-of-function cleanup and return for cmd* functions
+#define CMD_FOOTER(x)   DEALLOC: \
+  arg_freetable((void**)&args, sizeof(x)/sizeof(void*)); \
+  return retval;
 
 // Pin Resolution
 void initPins() {
@@ -1109,19 +1125,32 @@ void cmdRun(char** argv, uint8_t argc) {
   klog(("run " + path).c_str());
 }
 
-void cmdFor(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: for <count> \"<cmd>\"")); return; }
-  int count = constrain(safeAtoi(argv[1]), 1, 1000);
+typedef struct cmdFor_args {
+  arg_int_t *count;
+  arg_str_t *cmd;
+  arg_end_t *end;
+} cmdFor_args_t;
+void setCmdForArgs(struct cmdFor_args& args) {
+  args.count = arg_int1(NULL, NULL, "<count>", "The number of times to execute the command");
+  args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
+  args.end = arg_end(1);
+}
+int cmdFor(int argc, char** argv) {
+  int count;
   String cmd = "";
+  CMD_HEADER(cmdFor_args_t)
+
+  count = args.count->ival[0];
+
   for (int i = 2; i < argc; i++) { if (i > 2) cmd += " "; cmd += argv[i]; }
   for (int i = 0; i < count; i++) {
     Serial.printf(GRAY "\r  [%d/%d]" RESET, i + 1, count);
-    char* buf = strdup(cmd.c_str());
-    executeCommand(buf);
-    free(buf);
+    Console.run(cmd);
     delay(5);
   }
   Serial.println();
+
+  CMD_FOOTER(cmdFor_args_t)
 }
 
 void cmdDelay(char** argv, uint8_t argc) {
@@ -1358,8 +1387,11 @@ void setup() {
 //  Console.addCmd("exec", "", cmdEval);
 //  Console.addCmd("run", "", cmdRun);
 //  Console.addCmd("sh", "", cmdRun);
-//  Console.addCmd("for", "", cmdFor);
-//  Console.addCmd("loop", "", cmdFor);
+  cmdFor_args_t cmdForArgs;
+  setCmdForArgs(cmdForArgs);
+  Console.addCmd("for", "Run a command multiple times", &cmdForArgs, cmdFor);
+  Console.addCmd("loop", "Run a command multiple times", &cmdForArgs, cmdFor);
+  arg_freetable((void**)&cmdForArgs, sizeof(cmdFor_args_t)/sizeof(void*));
 //  Console.addCmd("delay", "", cmdDelay);
 //  Console.addCmd("sleep", "", cmdDelay);
 
