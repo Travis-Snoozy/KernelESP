@@ -5,6 +5,7 @@
  */
 
 #include <Arduino.h>
+#include <Console.h>
 #include <WiFi.h>
 #include <SPIFFS.h>
 #include <WebServer.h>
@@ -330,13 +331,6 @@ void showLogo() {
 
   Serial.println(GRAY "  ─────────────────────────────────────────────────────────────────────────" RESET);
   Serial.println(GRAY "  Type " YELLOW "'help'" GRAY " for commands.  " YELLOW "'wifi help'" GRAY " for network commands." RESET "\n");
-}
-
-// Prompt
-void printPrompt() {
-  const char* wifiTag = wifiConnected ? GREEN " [" BCYAN "net" GREEN "]" : "";
-  Serial.printf(BGREEN "root@" HOSTNAME RESET ":" BLUE "%s" RESET "%s" WHITE "$ " RESET,
-                currentPath, wifiTag);
 }
 
 // Hardware Commands
@@ -1207,14 +1201,15 @@ void cmdEcho(char** argv, uint8_t argc) {
 }
 void cmdClear(char** argv, uint8_t argc) { showLogo(); }
 
-void cmdWave(char** argv, uint8_t argc) {
-  Serial.println(F("\n"
+int cmdWave(int argc, char** argv) {
+  printf("\n"
     CYAN "  ╭╮              ╭╮\n"
     CYAN "  ╭╯╰╮          ╭╯╰╮\n"
     CYAN " ╭╯  ╰╮        ╭╯  ╰╮\n"
     CYAN "╭╯    ╰╮──────╭╯    ╰╮\n"
     CYAN "╯      ╰╮    ╭╯      ╰\n" RESET
-  ));
+  );
+  return 0;
 }
 
 void cmdHelp(char** argv, uint8_t argc) {
@@ -1285,65 +1280,6 @@ void executeCommand(char* line) {
   strlowerBuf(args[0]);
   const char* cmd = args[0];
 
-  // Hardware
-  if      (!strcmp(cmd,"pinmode"))                          cmdPinMode(args, argc);
-  else if (!strcmp(cmd,"write")  || !strcmp(cmd,"digitalwrite")) cmdDigitalWrite(args, argc);
-  else if (!strcmp(cmd,"read")   || !strcmp(cmd,"digitalread"))  cmdDigitalRead(args, argc);
-  else if (!strcmp(cmd,"aread")  || !strcmp(cmd,"analogread"))   cmdAnalogRead(args, argc);
-  else if (!strcmp(cmd,"pwm"))                              cmdPWM(args, argc);
-  #ifdef SOC_DAC_SUPPORTED
-  else if (!strcmp(cmd,"dac"))                              cmdDAC(args, argc);
-  #endif
-  else if (!strcmp(cmd,"gpio"))                             cmdGPIO(args, argc);
-  else if (!strcmp(cmd,"tone"))                             cmdTone(args, argc);
-  else if (!strcmp(cmd,"notone"))                           cmdNoTone(args, argc);
-  else if (!strcmp(cmd,"tsense"))                           cmdTouch(args, argc);
-  else if (!strcmp(cmd,"disco"))                            cmdDisco(args, argc);
-  else if (!strcmp(cmd,"morse"))                            cmdMorse(args, argc);
-  else if (!strcmp(cmd,"sensor"))                           cmdSensor(args, argc);
-  else if (!strcmp(cmd,"scope"))                            cmdScope(args, argc);
-  else if (!strcmp(cmd,"monitor"))                          cmdMonitor(args, argc);
-  else if (!strcmp(cmd,"pins"))                             cmdPins(args, argc);
-
-  // Filesystem
-  else if (!strcmp(cmd,"ls")    || !strcmp(cmd,"dir"))      cmdLS(args, argc);
-  else if (!strcmp(cmd,"cd"))                               cmdCD(args, argc);
-  else if (!strcmp(cmd,"pwd"))                              cmdPwd(args, argc);
-  else if (!strcmp(cmd,"mkdir"))                            cmdMkdir(args, argc);
-  else if (!strcmp(cmd,"touch"))                            cmdTouch2(args, argc);
-  else if (!strcmp(cmd,"cat")   || !strcmp(cmd,"type"))    cmdCat(args, argc);
-  else if (!strcmp(cmd,"writefile") || !strcmp(cmd,"write>")) cmdWrite(args, argc);
-  else if (!strcmp(cmd,"append"))                           cmdWrite(args, argc);
-  else if (!strcmp(cmd,"rm")    || !strcmp(cmd,"del"))      cmdRM(args, argc);
-  else if (!strcmp(cmd,"mv"))                               cmdMv(args, argc);
-  else if (!strcmp(cmd,"cp"))                               cmdCp(args, argc);
-  else if (!strcmp(cmd,"df"))                               cmdDf(args, argc);
-  else if (!strcmp(cmd,"echo"))                             cmdEcho(args, argc);
-
-  // WiFi
-  else if (!strcmp(cmd,"wifi"))                             cmdWifi(args, argc);
-
-  // Scripting
-  else if (!strcmp(cmd,"eval")  || !strcmp(cmd,"exec"))    cmdEval(args, argc);
-  else if (!strcmp(cmd,"run")   || !strcmp(cmd,"sh"))      cmdRun(args, argc);
-  else if (!strcmp(cmd,"for")   || !strcmp(cmd,"loop"))    cmdFor(args, argc);
-  else if (!strcmp(cmd,"delay") || !strcmp(cmd,"sleep"))   cmdDelay(args, argc);
-
-  // System
-  else if (!strcmp(cmd,"help")  || !strcmp(cmd,"?"))       cmdHelp(args, argc);
-  else if (!strcmp(cmd,"sysinfo")|| !strcmp(cmd,"neofetch")) cmdSysInfo(args, argc);
-  else if (!strcmp(cmd,"dmesg") || !strcmp(cmd,"log"))     cmdDmesg(args, argc);
-  else if (!strcmp(cmd,"free")  || !strcmp(cmd,"mem"))     cmdFree(args, argc);
-  else if (!strcmp(cmd,"uptime"))                           cmdUptime(args, argc);
-  else if (!strcmp(cmd,"whoami"))                           cmdWhoami(args, argc);
-  else if (!strcmp(cmd,"uname"))                            cmdUname(args, argc);
-  else if (!strcmp(cmd,"clear") || !strcmp(cmd,"cls"))     cmdClear(args, argc);
-  else if (!strcmp(cmd,"reboot")|| !strcmp(cmd,"reset"))   cmdReboot(args, argc);
-  else if (!strcmp(cmd,"wave"))                             cmdWave(args, argc);
-
-  else {
-    Serial.printf(RED "'%s'" RESET " not found. Type " YELLOW "'help'" RESET "\n", cmd);
-  }
 }
 
 // Setup
@@ -1368,45 +1304,91 @@ void setup() {
   klog("SPIFFS OK");
   klog("Serial @ 115200");
 
-  printPrompt();
+  // Todo: dynamic hostname, path, wifi
+  Console.setPrompt(BGREEN "root@" HOSTNAME RESET ":" BLUE "" RESET "" WHITE "$ " RESET);
+  Console.begin();
+  Console.setMaxHistory(16);
+  // Hardware
+  //Console.addCmd("pinmode", "", cmdPinMode);
+  //Console.addCmd("write", "", cmdDigitalWrite);
+  //Console.addCmd("digitalwrite", "", cmdDigitalWrite);
+  //Console.addCmd("read", "", cmdDigitalRead);
+  //Console.addCmd("digitalread", "", cmdDigitalRead);
+  //Console.addCmd("aread", "", cmdAnalogRead);
+  //Console.addCmd("analogread", "", cmdAnalogRead);
+  //Console.addCmd("pwm", "", cmdPWM);
+  #ifdef SOC_DAC_SUPPORTED
+  //Console.addCmd("dac", "", cmdDAC);
+  #endif
+  //Console.addCmd("gpio", "", cmdGPIO);
+  //Console.addCmd("tone", "", cmdTone);
+  //Console.addCmd("notone", "", cmdNoTone);
+  //Console.addCmd("tsense", "", cmdTouch);
+  //Console.addCmd("disco", "", cmdDisco);
+  //Console.addCmd("morse", "", cmdMorse);
+  //Console.addCmd("sensor", "", cmdSensor);
+  //Console.addCmd("scope", "", cmdScope);
+  //Console.addCmd("monitor", "", cmdMonitor);
+  //Console.addCmd("pins", "", cmdPins);
+
+  // Filesystem
+  //Console.addCmd("ls", "", cmdLS);
+  //Console.addCmd("dir", "", cmdLS);
+  //Console.addCmd("cd", "", cmdCD);
+  //Console.addCmd("pwd", "", cmdPwd);
+  //Console.addCmd("mkdir", "", cmdMkdir);
+  //Console.addCmd("touch", "", cmdTouch2);
+  //Console.addCmd("cat", "", cmdCat);
+  //Console.addCmd("type", "", cmdCat);
+  //Console.addCmd("writefile", "", cmdWrite);
+  //Console.addCmd("write>", "", cmdWrite);
+  //Console.addCmd("append", "", cmdWrite);
+  //Console.addCmd("rm", "", cmdRM);
+  //Console.addCmd("del", "", cmdRM);
+  //Console.addCmd("mv", "", cmdMv);
+  //Console.addCmd("cp", "", cmdCp);
+  //Console.addCmd("df", "", cmdDf);
+  //Console.addCmd("echo", "", cmdEcho);
+
+  // WiFi
+  //Console.addCmd("wifi", "", cmdWifi);
+
+  // Scripting
+//  Console.addCmd("eval", "", cmdEval);
+//  Console.addCmd("exec", "", cmdEval);
+//  Console.addCmd("run", "", cmdRun);
+//  Console.addCmd("sh", "", cmdRun);
+//  Console.addCmd("for", "", cmdFor);
+//  Console.addCmd("loop", "", cmdFor);
+//  Console.addCmd("delay", "", cmdDelay);
+//  Console.addCmd("sleep", "", cmdDelay);
+
+  // System
+//  Console.addCmd("help", "", cmdHelp);
+//  Console.addCmd("?", "", cmdHelp);
+//  Console.addCmd("sysinfo", "", cmdSysInfo);
+//  Console.addCmd("neofetch", "", cmdSysInfo);
+//  Console.addCmd("dmesg", "", cmdDmesg);
+//  Console.addCmd("log", "", cmdDmesg);
+//  Console.addCmd("free", "", cmdFree);
+//  Console.addCmd("mem", "", cmdFree);
+//  Console.addCmd("uptime", "", cmdUptime);
+//  Console.addCmd("whoami", "", cmdWhoami);
+//  Console.addCmd("uname", "", cmdUname);
+//  Console.addCmd("clear", "", cmdClear);
+//  Console.addCmd("cls", "", cmdClear);
+//  Console.addCmd("reboot", "", cmdReboot);
+//  Console.addCmd("reset", "", cmdReboot);
+  Console.addCmd("wave", "Display a wave in ASCII art", cmdWave);
+  Console.addHelpCmd();
+  Console.attachToSerial(true);
+
 }
 
 // Loop
 void loop() {
   // Handle HTTP server if active
   if (httpRunning && httpServer) httpServer->handleClient();
-
-  // Serial input
-  while (Serial.available()) {
-    char c = Serial.read();
-
-    if (c == '\r') continue; // ignore CR, handle LF
-
-    if (c == '\n') {
-      inputBuffer[inputLen] = '\0';
-      if (inputLen > 0) {
-        Serial.println();
-        executeCommand(inputBuffer);
-      }
-      inputLen = 0;
-      memset(inputBuffer, 0, CMD_LEN);
-      printPrompt();
-
-    } else if (c == 8 || c == 127) { // Backspace / DEL
-      if (inputLen > 0) {
-        inputLen--;
-        Serial.print(F("\b \b"));
-      }
-
-    } else if (c == '\t') {
-      // Tab — visual hint only (completion is handled on Python side)
-      Serial.print(F(GRAY "..." RESET));
-
-    } else if (inputLen < CMD_LEN - 1 && c >= 32 && c < 127) {
-      inputBuffer[inputLen++] = c;
-      Serial.print(c); // local echo
-    }
-  }
 
   // Small yield so WiFi stack can breathe
   delay(1);
