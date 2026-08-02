@@ -173,6 +173,24 @@ char* ltrim(char* s) {
   ARG_FREETABLE_STACK(args); \
   return retval;
 
+// Register a command with arguments and aliases.
+// v: ARR({"alias1", "alias2"})
+// w: "Description of command"
+// x: cmdName_arg_t (type of argtable)
+// y: cmdSetNameArg (function to set argtable)
+// z: cmdName (command implementation)
+#define ADDCMD(v, w, x, y, z)   { \
+  x a; \
+  y(a); \
+  char *b[] = v; \
+  char *c = w; \
+  for (int i = 0; i < (sizeof(b)/sizeof(char*)); i++) Console.addCmd(b[i], c, &a, z); \
+  ARG_FREETABLE_STACK(a); \
+  }
+
+// Wrapper to allow {"alias1", "alias2"} to be parsed as one parameter, not multiple.
+#define ARR(...) __VA_ARGS__
+
 
 // Pin Resolution
 void initPins() {
@@ -1364,18 +1382,10 @@ void setup() {
   //Console.addCmd("wifi", "", cmdWifi);
 
   // Scripting
-  cmdEval_args_t cmdEvalArgs;
-  setCmdEvalArgs(cmdEvalArgs);
-  Console.addCmd("eval", "Run commands as though read from a script", &cmdEvalArgs, cmdEval);
-  Console.addCmd("exec", "Run commands as though read from a script", &cmdEvalArgs, cmdEval);
-  ARG_FREETABLE_STACK(cmdEvalArgs);
+  ADDCMD(ARR({"eval", "exec"}), "Run commands as though read from a script", cmdEval_args_t, setCmdEvalArgs, cmdEval);
 //  Console.addCmd("run", "", cmdRun);
 //  Console.addCmd("sh", "", cmdRun);
-  cmdFor_args_t cmdForArgs;
-  setCmdForArgs(cmdForArgs);
-  Console.addCmd("for", "Run a command multiple times", &cmdForArgs, cmdFor);
-  Console.addCmd("loop", "Run a command multiple times", &cmdForArgs, cmdFor);
-  ARG_FREETABLE_STACK(cmdForArgs);
+  ADDCMD(ARR({"for", "loop"}), "Run a command multiple times", cmdFor_args_t, setCmdForArgs, cmdFor);
 //  Console.addCmd("delay", "", cmdDelay);
 //  Console.addCmd("sleep", "", cmdDelay);
 
@@ -1395,10 +1405,7 @@ void setup() {
 //  Console.addCmd("cls", "", cmdClear);
 //  Console.addCmd("reboot", "", cmdReboot);
 //  Console.addCmd("reset", "", cmdReboot);
-  cmdWave_args_t cmdWaveArgs;
-  setCmdWaveArgs(cmdWaveArgs);
-  Console.addCmd("wave", "Display a wave in ASCII art", &cmdWaveArgs, cmdWave);
-  ARG_FREETABLE_STACK(cmdWaveArgs);
+  ADDCMD({"wave"}, "Display a wave in ASCII art", cmdWave_args_t, setCmdWaveArgs, cmdWave);
   Console.addHelpCmd();
 
   Console.attachToSerial(true);
