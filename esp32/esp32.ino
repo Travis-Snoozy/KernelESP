@@ -1220,10 +1220,21 @@ void cmdDmesg(char** argv, uint8_t argc) {
   Serial.println();
 }
 
-void cmdReboot(char** argv, uint8_t argc) {
-  Serial.println(F("\n  Rebooting...\n"));
+typedef struct cmdReboot_args {
+  arg_end_t *end;
+} cmdReboot_args_t;
+static cmdReboot_args_t cmdRebootHelp;
+void setCmdRebootArgs(struct cmdReboot_args* args) {
+  args->end = arg_end(2);
+}
+int cmdReboot(int argc, char** argv) {
+  CMD_HEADER(struct cmdReboot_args, setCmdRebootArgs)
+
+  printf("\n  Rebooting...\n");
   delay(300);
   ESP.restart();
+
+  CMD_FOOTER
 }
 
 void cmdWhoami(char** argv, uint8_t argc) { Serial.println("root"); }
@@ -1403,8 +1414,7 @@ void setup() {
 //  Console.addCmd("uname", "", cmdUname);
 //  Console.addCmd("clear", "", cmdClear);
 //  Console.addCmd("cls", "", cmdClear);
-//  Console.addCmd("reboot", "", cmdReboot);
-//  Console.addCmd("reset", "", cmdReboot);
+  ADDCMD(ARR({"reboot","reset"}), "", Reboot);
   ADDCMD({"wave"}, "Display a wave in ASCII art", Wave);
   Console.addHelpCmd();
 
