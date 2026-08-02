@@ -101,6 +101,7 @@ pinCap_t  pinCapabilities[SOC_GPIO_PIN_COUNT];
 pinCap_t  pinAssignment[SOC_GPIO_PIN_COUNT];
 
 // Args storage (avoid heap fragmentation)
+void* helpArgs[10];
 char  argStorage[MAX_ARGS][ARG_LEN];
 char* args[MAX_ARGS];
 uint8_t argCount = 0;
@@ -156,12 +157,12 @@ char* ltrim(char* s) {
 // Command Parser
 
 // Free a local argtable variable
-#define ARG_FREETABLE_STACK(x) arg_freetable((void**)&x, sizeof(typeof(x))/sizeof(void*))
+#define ARG_FREETABLE(x, y) arg_freetable((void**)x, sizeof(y)/sizeof(void*))
 
 // Command line parsing boilerplate for cmd* functions
 #define CMD_HEADER(x, y)   x args; \
   int retval = 0; \
-  y(args); \
+  y(&args); \
   if (arg_parse(argc, argv, (void**)&args) != 0) { \
     arg_print_errors(stderr, args.end, argv[0]); \
     retval = -1; \
@@ -170,22 +171,18 @@ char* ltrim(char* s) {
 
 // End-of-function cleanup and return for cmd* functions
 #define CMD_FOOTER   DEALLOC: \
-  ARG_FREETABLE_STACK(args); \
+  ARG_FREETABLE(&args, typeof(args)); \
   return retval;
 
 // Register a command with arguments and aliases.
-// v: ARR({"alias1", "alias2"})
-// w: "Description of command"
-// x: cmdName_arg_t (type of argtable)
-// y: cmdSetNameArg (function to set argtable)
-// z: cmdName (command implementation)
-#define ADDCMD(v, w, x, y, z)   { \
-  x a; \
-  y(a); \
-  char *b[] = v; \
-  char *c = w; \
-  for (int i = 0; i < (sizeof(b)/sizeof(char*)); i++) Console.addCmd(b[i], c, &a, z); \
-  ARG_FREETABLE_STACK(a); \
+// x: ARR({"alias1", "alias2"})
+// y: "Description of command"
+// x: The Name in cmdName/setCmdNameArgs/cmdNameHelp
+#define ADDCMD(x, y, z)   { \
+  setCmd ## z ## Args(&cmd ## z ## Help); \
+  char *b[] = x; \
+  char *c = y; \
+  for (int i = 0; i < (sizeof(b)/sizeof(char*)); i++) Console.addCmd(b[i], c, &cmd ## z ## Help, cmd ## z); \
   }
 
 // Wrapper to allow {"alias1", "alias2"} to be parsed as one parameter, not multiple.
@@ -1106,9 +1103,10 @@ typedef struct cmdEval_args {
   struct arg_str *cmd;
   struct arg_end *end;
 } cmdEval_args_t;
-void setCmdEvalArgs(struct cmdEval_args& args) {
-  args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
-  args.end = arg_end(2);
+static cmdEval_args_t cmdEvalHelp;
+void setCmdEvalArgs(struct cmdEval_args* args) {
+  args->cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
+  args->end = arg_end(2);
 }
 int cmdEval(int argc, char** argv) {
   String code = "";
@@ -1140,10 +1138,11 @@ typedef struct cmdFor_args {
   arg_str_t *cmd;
   arg_end_t *end;
 } cmdFor_args_t;
-void setCmdForArgs(struct cmdFor_args& args) {
-  args.count = arg_int1(NULL, NULL, "<count>", "The number of times to execute the command");
-  args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
-  args.end = arg_end(2);
+static cmdFor_args_t cmdForHelp;
+void setCmdForArgs(struct cmdFor_args* args) {
+  args->count = arg_int1(NULL, NULL, "<count>", "The number of times to execute the command");
+  args->cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
+  args->end = arg_end(2);
 }
 int cmdFor(int argc, char** argv) {
   int count;
@@ -1243,8 +1242,9 @@ void cmdClear(char** argv, uint8_t argc) { showLogo(); }
 typedef struct cmdWave_args {
   arg_end_t *end;
 } cmdWave_args_t;
-void setCmdWaveArgs(struct cmdWave_args& args) {
-  args.end = arg_end(2);
+static cmdWave_args_t cmdWaveHelp;
+void setCmdWaveArgs(struct cmdWave_args* args) {
+  args->end = arg_end(2);
 }
 int cmdWave(int argc, char** argv) {
   CMD_HEADER(cmdWave_args_t, setCmdWaveArgs)
@@ -1382,10 +1382,10 @@ void setup() {
   //Console.addCmd("wifi", "", cmdWifi);
 
   // Scripting
-  ADDCMD(ARR({"eval", "exec"}), "Run commands as though read from a script", cmdEval_args_t, setCmdEvalArgs, cmdEval);
+  ADDCMD(ARR({"eval", "exec"}), "Run commands as though read from a script", Eval);
 //  Console.addCmd("run", "", cmdRun);
 //  Console.addCmd("sh", "", cmdRun);
-  ADDCMD(ARR({"for", "loop"}), "Run a command multiple times", cmdFor_args_t, setCmdForArgs, cmdFor);
+  ADDCMD(ARR({"for", "loop"}), "Run a command multiple times", For);
 //  Console.addCmd("delay", "", cmdDelay);
 //  Console.addCmd("sleep", "", cmdDelay);
 
@@ -1405,7 +1405,7 @@ void setup() {
 //  Console.addCmd("cls", "", cmdClear);
 //  Console.addCmd("reboot", "", cmdReboot);
 //  Console.addCmd("reset", "", cmdReboot);
-  ADDCMD({"wave"}, "Display a wave in ASCII art", cmdWave_args_t, setCmdWaveArgs, cmdWave);
+  ADDCMD({"wave"}, "Display a wave in ASCII art", Wave);
   Console.addHelpCmd();
 
   Console.attachToSerial(true);
