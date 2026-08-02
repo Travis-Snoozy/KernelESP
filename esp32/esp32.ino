@@ -1397,7 +1397,7 @@ void setup() {
 //  Console.addCmd("reset", "", cmdReboot);
   cmdWave_args_t cmdWaveArgs;
   setCmdWaveArgs(cmdWaveArgs);
-  Console.addCmd("wav", "Display a wave in ASCII art", &cmdWaveArgs, cmdWave);
+  Console.addCmd("wave", "Display a wave in ASCII art", &cmdWaveArgs, cmdWave);
   ARG_FREETABLE_STACK(cmdWaveArgs);
   Console.addHelpCmd();
 
