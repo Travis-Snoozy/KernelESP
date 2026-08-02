@@ -160,9 +160,9 @@ char* ltrim(char* s) {
 #define ARG_FREETABLE(x, y) arg_freetable((void**)x, sizeof(y)/sizeof(void*))
 
 // Command line parsing boilerplate for cmd* functions
-#define CMD_HEADER(x, y)   x args; \
+#define CMD_HEADER(x)   cmd ## x ## _args_t args; \
   int retval = 0; \
-  y(&args); \
+  setCmd ## x ## Args(&args); \
   if (arg_parse(argc, argv, (void**)&args) != 0) { \
     arg_print_errors(stderr, args.end, argv[0]); \
     retval = -1; \
@@ -1110,7 +1110,7 @@ void setCmdEvalArgs(struct cmdEval_args* args) {
 }
 int cmdEval(int argc, char** argv) {
   String code = "";
-  CMD_HEADER(struct cmdEval_args, setCmdEvalArgs)
+  CMD_HEADER(Eval)
 
   for (int i = 1; i < argc; i++) { if (i > 1) code += " "; code += argv[i]; }
   Serial.println(F(CYAN ">>> eval" RESET));
@@ -1147,7 +1147,7 @@ void setCmdForArgs(struct cmdFor_args* args) {
 int cmdFor(int argc, char** argv) {
   int count;
   String cmd = "";
-  CMD_HEADER(cmdFor_args_t, setCmdForArgs)
+  CMD_HEADER(For)
 
   count = args.count->ival[0];
 
@@ -1228,7 +1228,7 @@ void setCmdRebootArgs(struct cmdReboot_args* args) {
   args->end = arg_end(2);
 }
 int cmdReboot(int argc, char** argv) {
-  CMD_HEADER(struct cmdReboot_args, setCmdRebootArgs)
+  CMD_HEADER(Reboot)
 
   printf("\n  Rebooting...\n");
   delay(300);
@@ -1258,7 +1258,7 @@ void setCmdWaveArgs(struct cmdWave_args* args) {
   args->end = arg_end(2);
 }
 int cmdWave(int argc, char** argv) {
-  CMD_HEADER(cmdWave_args_t, setCmdWaveArgs)
+  CMD_HEADER(Wave)
   printf("\n"
     CYAN "  ╭╮              ╭╮\n"
     CYAN "  ╭╯╰╮          ╭╯╰╮\n"
@@ -1414,7 +1414,7 @@ void setup() {
 //  Console.addCmd("uname", "", cmdUname);
 //  Console.addCmd("clear", "", cmdClear);
 //  Console.addCmd("cls", "", cmdClear);
-  ADDCMD(ARR({"reboot","reset"}), "", Reboot);
+  ADDCMD(ARR({"reboot","reset"}), "Reboot the processor", Reboot);
   ADDCMD({"wave"}, "Display a wave in ASCII art", Wave);
   Console.addHelpCmd();
 
