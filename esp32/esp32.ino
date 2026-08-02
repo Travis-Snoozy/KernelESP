@@ -154,33 +154,14 @@ char* ltrim(char* s) {
 }
 
 // Command Parser
-// Handles quoted strings properly: eval "gpio 2 on; delay 100"
-void parseCommand(char* line, char** argv, uint8_t* argc) {
-  *argc = 0;
-  char* p = line;
-  while (*p && *argc < MAX_ARGS) {
-    while (*p == ' ') p++;
-    if (!*p) break;
 
-    char* dst = argStorage[*argc];
-    int di = 0;
-
-    if (*p == '"' || *p == '\'') {
-      char q = *p++;
-      while (*p && *p != q && di < ARG_LEN - 1) dst[di++] = *p++;
-      if (*p == q) p++;
-    } else {
-      while (*p && *p != ' ' && di < ARG_LEN - 1) dst[di++] = *p++;
-    }
-    dst[di] = '\0';
-    argv[(*argc)++] = dst;
-  }
-}
+// Free a local argtable variable
+#define ARG_FREETABLE_STACK(x) arg_freetable((void**)&x, sizeof(typeof(x))/sizeof(void*))
 
 // Command line parsing boilerplate for cmd* functions
-#define CMD_HEADER(x)   x args; \
+#define CMD_HEADER(x, y)   x args; \
   int retval = 0; \
-  setCmdForArgs(args); \
+  y(args); \
   if (arg_parse(argc, argv, (void**)&args) != 0) { \
     arg_print_errors(stderr, args.end, argv[0]); \
     retval = -1; \
@@ -188,9 +169,10 @@ void parseCommand(char* line, char** argv, uint8_t* argc) {
   }
 
 // End-of-function cleanup and return for cmd* functions
-#define CMD_FOOTER(x)   DEALLOC: \
-  arg_freetable((void**)&args, sizeof(x)/sizeof(void*)); \
+#define CMD_FOOTER   DEALLOC: \
+  ARG_FREETABLE_STACK(args); \
   return retval;
+
 
 // Pin Resolution
 void initPins() {
@@ -1079,7 +1061,6 @@ void cmdWifi(char** argv, uint8_t argc) {
 }
 
 // Scripting
-void executeCommand(char* line);  // forward declaration
 
 void runScript(const char* text) {
   char* buf = (char*)malloc(strlen(text) + 2);
@@ -1095,7 +1076,7 @@ void runScript(const char* text) {
     while (len > 0 && (cmd[len-1] == ' ' || cmd[len-1] == '\r' || cmd[len-1] == '\n')) cmd[--len] = '\0';
     if (len > 0 && cmd[0] != '#') {
       Serial.printf(GRAY "  [%d]" RESET " $ %s\n", ++n, cmd);
-      executeCommand(cmd);
+      Console.run(cmd);
       delay(20);
     }
     cmd = strtok(nullptr, ";");
@@ -1103,13 +1084,24 @@ void runScript(const char* text) {
   free(buf);
 }
 
-void cmdEval(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: eval \"cmd1; cmd2; ...\"")); return; }
+typedef struct cmdEval_args {
+  struct arg_str *cmd;
+  struct arg_end *end;
+} cmdEval_args_t;
+void setCmdEvalArgs(struct cmdEval_args& args) {
+  args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
+  args.end = arg_end(2);
+}
+int cmdEval(int argc, char** argv) {
   String code = "";
+  CMD_HEADER(struct cmdEval_args, setCmdEvalArgs)
+
   for (int i = 1; i < argc; i++) { if (i > 1) code += " "; code += argv[i]; }
   Serial.println(F(CYAN ">>> eval" RESET));
   runScript(code.c_str());
   Serial.println(F(CYAN ">>> done" RESET));
+
+  CMD_FOOTER
 }
 
 void cmdRun(char** argv, uint8_t argc) {
@@ -1133,12 +1125,12 @@ typedef struct cmdFor_args {
 void setCmdForArgs(struct cmdFor_args& args) {
   args.count = arg_int1(NULL, NULL, "<count>", "The number of times to execute the command");
   args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
-  args.end = arg_end(1);
+  args.end = arg_end(2);
 }
 int cmdFor(int argc, char** argv) {
   int count;
   String cmd = "";
-  CMD_HEADER(cmdFor_args_t)
+  CMD_HEADER(cmdFor_args_t, setCmdForArgs)
 
   count = args.count->ival[0];
 
@@ -1150,7 +1142,7 @@ int cmdFor(int argc, char** argv) {
   }
   Serial.println();
 
-  CMD_FOOTER(cmdFor_args_t)
+  CMD_FOOTER
 }
 
 void cmdDelay(char** argv, uint8_t argc) {
@@ -1230,7 +1222,14 @@ void cmdEcho(char** argv, uint8_t argc) {
 }
 void cmdClear(char** argv, uint8_t argc) { showLogo(); }
 
+typedef struct cmdWave_args {
+  arg_end_t *end;
+} cmdWave_args_t;
+void setCmdWaveArgs(struct cmdWave_args& args) {
+  args.end = arg_end(2);
+}
 int cmdWave(int argc, char** argv) {
+  CMD_HEADER(cmdWave_args_t, setCmdWaveArgs)
   printf("\n"
     CYAN "  ╭╮              ╭╮\n"
     CYAN "  ╭╯╰╮          ╭╯╰╮\n"
@@ -1238,7 +1237,7 @@ int cmdWave(int argc, char** argv) {
     CYAN "╭╯    ╰╮──────╭╯    ╰╮\n"
     CYAN "╯      ╰╮    ╭╯      ╰\n" RESET
   );
-  return 0;
+  CMD_FOOTER
 }
 
 void cmdHelp(char** argv, uint8_t argc) {
@@ -1291,24 +1290,6 @@ void cmdHelp(char** argv, uint8_t argc) {
   Serial.println(F("\n  " GREEN "System:" RESET));
   Serial.println(F("    sysinfo / neofetch   uptime   free   df   dmesg"));
   Serial.println(F("    whoami   uname   echo <text>   clear   wave   reboot\n"));
-}
-
-// Main Command Router
-void executeCommand(char* line) {
-  line = ltrim(line);
-  if (!line || strlen(line) == 0 || line[0] == '#') return;
-
-  char lineCopy[CMD_LEN];
-  strncpy(lineCopy, line, CMD_LEN - 1);
-  lineCopy[CMD_LEN - 1] = '\0';
-
-  uint8_t argc = 0;
-  parseCommand(lineCopy, args, &argc);
-  if (argc == 0) return;
-
-  strlowerBuf(args[0]);
-  const char* cmd = args[0];
-
 }
 
 // Setup
@@ -1383,15 +1364,18 @@ void setup() {
   //Console.addCmd("wifi", "", cmdWifi);
 
   // Scripting
-//  Console.addCmd("eval", "", cmdEval);
-//  Console.addCmd("exec", "", cmdEval);
+  cmdEval_args_t cmdEvalArgs;
+  setCmdEvalArgs(cmdEvalArgs);
+  Console.addCmd("eval", "Run commands as though read from a script", &cmdEvalArgs, cmdEval);
+  Console.addCmd("exec", "Run commands as though read from a script", &cmdEvalArgs, cmdEval);
+  ARG_FREETABLE_STACK(cmdEvalArgs);
 //  Console.addCmd("run", "", cmdRun);
 //  Console.addCmd("sh", "", cmdRun);
   cmdFor_args_t cmdForArgs;
   setCmdForArgs(cmdForArgs);
   Console.addCmd("for", "Run a command multiple times", &cmdForArgs, cmdFor);
   Console.addCmd("loop", "Run a command multiple times", &cmdForArgs, cmdFor);
-  arg_freetable((void**)&cmdForArgs, sizeof(cmdFor_args_t)/sizeof(void*));
+  ARG_FREETABLE_STACK(cmdForArgs);
 //  Console.addCmd("delay", "", cmdDelay);
 //  Console.addCmd("sleep", "", cmdDelay);
 
@@ -1411,8 +1395,12 @@ void setup() {
 //  Console.addCmd("cls", "", cmdClear);
 //  Console.addCmd("reboot", "", cmdReboot);
 //  Console.addCmd("reset", "", cmdReboot);
-  Console.addCmd("wave", "Display a wave in ASCII art", cmdWave);
+  cmdWave_args_t cmdWaveArgs;
+  setCmdWaveArgs(cmdWaveArgs);
+  Console.addCmd("wav", "Display a wave in ASCII art", &cmdWaveArgs, cmdWave);
+  ARG_FREETABLE_STACK(cmdWaveArgs);
   Console.addHelpCmd();
+
   Console.attachToSerial(true);
 
 }
