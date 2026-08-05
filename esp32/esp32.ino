@@ -17,6 +17,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <array>
+#include <list>
+
 // Boards
 #ifdef ARDUINO_ESP32S3_DEV
 #define KESP_BOARD_SET
@@ -101,7 +104,6 @@ pinCap_t  pinCapabilities[SOC_GPIO_PIN_COUNT];
 pinCap_t  pinAssignment[SOC_GPIO_PIN_COUNT];
 
 // Args storage (avoid heap fragmentation)
-void* helpArgs[10];
 char  argStorage[MAX_ARGS][ARG_LEN];
 char* args[MAX_ARGS];
 uint8_t argCount = 0;
@@ -156,38 +158,40 @@ char* ltrim(char* s) {
 
 // Command Parser
 
-// Free a local argtable variable
-#define ARG_FREETABLE(x, y) arg_freetable((void**)x, sizeof(y)/sizeof(void*))
+template <typename T> class Command {
+  private:
+    static void freeArgs(T &args) {
+      arg_freetable((void**)&args, sizeof(T)/sizeof(void*));
+    }
 
-// Command line parsing boilerplate for cmd* functions
-#define CMD_HEADER(x)   cmd ## x ## _args_t args; \
-  int retval = 0; \
-  setCmd ## x ## Args(&args); \
-  if (arg_parse(argc, argv, (void**)&args) != 0) { \
-    arg_print_errors(stderr, args.end, argv[0]); \
-    retval = -1; \
-    goto DEALLOC; \
-  }
+    static int execute(int argc, char** argv, void(*setArgs)(T&), int(*implementation)(int argc, char** argv, T& args)) {
+      T args;
+      int retval = 0;
+      setArgs(args);
+      if (arg_parse(argc, argv, (void**)&args) != 0) {
+        arg_print_errors(stderr, args.end, argv[0]);
+        retval = -1;
+        goto DEALLOC;
+      }
 
-// End-of-function cleanup and return for cmd* functions
-#define CMD_FOOTER   DEALLOC: \
-  ARG_FREETABLE(&args, typeof(args)); \
-  return retval;
+      retval = implementation(argc, argv, args);
 
-// Register a command with arguments and aliases.
-// x: ARR({"alias1", "alias2"})
-// y: "Description of command"
-// x: The Name in cmdName/setCmdNameArgs/cmdNameHelp
-#define ADDCMD(x, y, z)   { \
-  setCmd ## z ## Args(&cmd ## z ## Help); \
-  char *b[] = x; \
-  char *c = y; \
-  for (int i = 0; i < (sizeof(b)/sizeof(char*)); i++) Console.addCmd(b[i], c, &cmd ## z ## Help, cmd ## z); \
-  }
+      DEALLOC:
+      freeArgs(args);
+      return retval;
+    }
+  public:
+    static void addCmd(std::list<const char*> names, const char* description, T &help) {
+      T::setArgs(help);
+      for (const char* name : names) {
+        Console.addCmd(name, description, (void*)&help, Command<T>::wrapper);
+      }
+    }
 
-// Wrapper to allow {"alias1", "alias2"} to be parsed as one parameter, not multiple.
-#define ARR(...) __VA_ARGS__
-
+    static int wrapper(int argc, char** argv) {
+      return Command<T>::execute(argc, argv, T::setArgs, T::implementation);
+    }
+};
 
 // Pin Resolution
 void initPins() {
@@ -1099,26 +1103,25 @@ void runScript(const char* text) {
   free(buf);
 }
 
-typedef struct cmdEval_args {
+struct cmdEval_args {
   struct arg_str *cmd;
   struct arg_end *end;
-} cmdEval_args_t;
-static cmdEval_args_t cmdEvalHelp;
-void setCmdEvalArgs(struct cmdEval_args* args) {
-  args->cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
-  args->end = arg_end(2);
-}
-int cmdEval(int argc, char** argv) {
-  String code = "";
-  CMD_HEADER(Eval)
+  static void setArgs(struct cmdEval_args &args) {
+      args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
+      args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdEval_args &args) {
+    String code = "";
 
-  for (int i = 1; i < argc; i++) { if (i > 1) code += " "; code += argv[i]; }
-  Serial.println(F(CYAN ">>> eval" RESET));
-  runScript(code.c_str());
-  Serial.println(F(CYAN ">>> done" RESET));
+    for (int i = 1; i < argc; i++) { if (i > 1) code += " "; code += argv[i]; }
+    Serial.println(F(CYAN ">>> eval" RESET));
+    runScript(code.c_str());
+    Serial.println(F(CYAN ">>> done" RESET));
 
-  CMD_FOOTER
-}
+    return 0;
+  }
+};
+static struct cmdEval_args cmdEvalHelp;
 
 void cmdRun(char** argv, uint8_t argc) {
   if (argc < 2) { Serial.println(F("Usage: run <script_file>")); return; }
@@ -1133,34 +1136,33 @@ void cmdRun(char** argv, uint8_t argc) {
   klog(("run " + path).c_str());
 }
 
-typedef struct cmdFor_args {
+struct cmdFor_args {
   arg_int_t *count;
   arg_str_t *cmd;
   arg_end_t *end;
-} cmdFor_args_t;
-static cmdFor_args_t cmdForHelp;
-void setCmdForArgs(struct cmdFor_args* args) {
-  args->count = arg_int1(NULL, NULL, "<count>", "The number of times to execute the command");
-  args->cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
-  args->end = arg_end(2);
-}
-int cmdFor(int argc, char** argv) {
-  int count;
-  String cmd = "";
-  CMD_HEADER(For)
-
-  count = args.count->ival[0];
-
-  for (int i = 2; i < argc; i++) { if (i > 2) cmd += " "; cmd += argv[i]; }
-  for (int i = 0; i < count; i++) {
-    Serial.printf(GRAY "\r  [%d/%d]" RESET, i + 1, count);
-    Console.run(cmd);
-    delay(5);
+  static void setArgs(struct cmdFor_args &args) {
+    args.count = arg_int1(NULL, NULL, "<count>", "The number of times to execute the command");
+    args.cmd = arg_strn(NULL, NULL, "<cmd>", 1, MAX_ARGS, "The command to execute");
+    args.end = arg_end(2);
   }
-  Serial.println();
+  static int implementation(int argc, char** argv, struct cmdFor_args &args) {
+    int count;
+    String cmd = "";
 
-  CMD_FOOTER
-}
+    count = args.count->ival[0];
+
+    for (int i = 2; i < argc; i++) { if (i > 2) cmd += " "; cmd += argv[i]; }
+    for (int i = 0; i < count; i++) {
+      Serial.printf(GRAY "\r  [%d/%d]" RESET, i + 1, count);
+      Console.run(cmd);
+      delay(5);
+    }
+    Serial.println();
+
+    return 0;
+  }
+};
+static struct cmdFor_args cmdForHelp;
 
 void cmdDelay(char** argv, uint8_t argc) {
   if (argc < 2) { Serial.println(F("Usage: delay <ms>")); return; }
@@ -1220,22 +1222,21 @@ void cmdDmesg(char** argv, uint8_t argc) {
   Serial.println();
 }
 
-typedef struct cmdReboot_args {
+struct cmdReboot_args {
   arg_end_t *end;
-} cmdReboot_args_t;
-static cmdReboot_args_t cmdRebootHelp;
-void setCmdRebootArgs(struct cmdReboot_args* args) {
-  args->end = arg_end(2);
-}
-int cmdReboot(int argc, char** argv) {
-  CMD_HEADER(Reboot)
+  static void setArgs(struct cmdReboot_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdReboot_args &args) {
 
-  printf("\n  Rebooting...\n");
-  delay(300);
-  ESP.restart();
+    printf("\n  Rebooting...\n");
+    delay(300);
+    ESP.restart();
 
-  CMD_FOOTER
-}
+    return 0;
+  }
+};
+static struct cmdReboot_args cmdRebootHelp;
 
 void cmdWhoami(char** argv, uint8_t argc) { Serial.println("root"); }
 void cmdUname(char** argv, uint8_t argc)  { Serial.println("KernelESP v1.0 ESP32 xtensa"); }
@@ -1250,24 +1251,23 @@ void cmdEcho(char** argv, uint8_t argc) {
 }
 void cmdClear(char** argv, uint8_t argc) { showLogo(); }
 
-typedef struct cmdWave_args {
+struct cmdWave_args {
   arg_end_t *end;
-} cmdWave_args_t;
-static cmdWave_args_t cmdWaveHelp;
-void setCmdWaveArgs(struct cmdWave_args* args) {
-  args->end = arg_end(2);
-}
-int cmdWave(int argc, char** argv) {
-  CMD_HEADER(Wave)
-  printf("\n"
-    CYAN "  ╭╮              ╭╮\n"
-    CYAN "  ╭╯╰╮          ╭╯╰╮\n"
-    CYAN " ╭╯  ╰╮        ╭╯  ╰╮\n"
-    CYAN "╭╯    ╰╮──────╭╯    ╰╮\n"
-    CYAN "╯      ╰╮    ╭╯      ╰\n" RESET
-  );
-  CMD_FOOTER
-}
+  static void setArgs(struct cmdWave_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWave_args &args) {
+    printf("\n"
+      CYAN "  ╭╮              ╭╮\n"
+      CYAN "  ╭╯╰╮          ╭╯╰╮\n"
+      CYAN " ╭╯  ╰╮        ╭╯  ╰╮\n"
+      CYAN "╭╯    ╰╮──────╭╯    ╰╮\n"
+      CYAN "╯      ╰╮    ╭╯      ╰\n" RESET
+    );
+    return 0;
+  }
+};
+static struct cmdWave_args cmdWaveHelp;
 
 void cmdHelp(char** argv, uint8_t argc) {
   Serial.println(F("\n  " CYAN "KernelESP v1.0 Command Reference" RESET "\n"));
@@ -1393,10 +1393,10 @@ void setup() {
   //Console.addCmd("wifi", "", cmdWifi);
 
   // Scripting
-  ADDCMD(ARR({"eval", "exec"}), "Run commands as though read from a script", Eval);
+  Command<struct cmdEval_args>::addCmd({"eval", "exec"}, "Run commands as though read from a script", cmdEvalHelp);
 //  Console.addCmd("run", "", cmdRun);
 //  Console.addCmd("sh", "", cmdRun);
-  ADDCMD(ARR({"for", "loop"}), "Run a command multiple times", For);
+  Command<struct cmdFor_args>::addCmd({"for", "loop"}, "Run a command multiple times", cmdForHelp);
 //  Console.addCmd("delay", "", cmdDelay);
 //  Console.addCmd("sleep", "", cmdDelay);
 
@@ -1414,8 +1414,8 @@ void setup() {
 //  Console.addCmd("uname", "", cmdUname);
 //  Console.addCmd("clear", "", cmdClear);
 //  Console.addCmd("cls", "", cmdClear);
-  ADDCMD(ARR({"reboot","reset"}), "Reboot the processor", Reboot);
-  ADDCMD({"wave"}, "Display a wave in ASCII art", Wave);
+  Command<struct cmdReboot_args>::addCmd({"reboot", "reset"}, "Reboot the processor", cmdRebootHelp);
+  Command<struct cmdWave_args>::addCmd({"wave"}, "Display a wave in ASCII art", cmdWaveHelp);
   Console.addHelpCmd();
 
   Console.attachToSerial(true);
