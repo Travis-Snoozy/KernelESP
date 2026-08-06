@@ -17,7 +17,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <array>
 #include <list>
 
 // Boards
@@ -96,17 +95,10 @@ typedef uint8_t pinCap_t;
 #define PC_DAC    (1 << 5)
 
 // Global State
-char  inputBuffer[CMD_LEN];
-int   inputLen   = 0;
 char  currentPath[PATH_LEN] = "/";
 unsigned long bootTime;
 pinCap_t  pinCapabilities[SOC_GPIO_PIN_COUNT];
 pinCap_t  pinAssignment[SOC_GPIO_PIN_COUNT];
-
-// Args storage (avoid heap fragmentation)
-char  argStorage[MAX_ARGS][ARG_LEN];
-char* args[MAX_ARGS];
-uint8_t argCount = 0;
 
 // Kernel log
 struct DmesgEntry { unsigned long ts; char msg[DMESG_LEN]; };
@@ -156,14 +148,13 @@ char* ltrim(char* s) {
   return s;
 }
 
-// Command Parser
-
+// Console class command adapter/convenience wrapper
 template <typename T> class Command {
   private:
-    static void freeArgs(T &args) {
-      arg_freetable((void**)&args, sizeof(T)/sizeof(void*));
-    }
-
+    // Wrap the core implementation of a command in boiler plate that
+    // does the common parsing and error handling in a re-entrant safe
+    // way, so that the implementation itself only has to focus on the
+    // details of the command itself.
     static int execute(int argc, char** argv, void(*setArgs)(T&), int(*implementation)(int argc, char** argv, T& args)) {
       T args;
       int retval = 0;
@@ -171,16 +162,16 @@ template <typename T> class Command {
       if (arg_parse(argc, argv, (void**)&args) != 0) {
         arg_print_errors(stderr, args.end, argv[0]);
         retval = -1;
-        goto DEALLOC;
+      } else {
+        retval = implementation(argc, argv, args);
       }
 
-      retval = implementation(argc, argv, args);
-
-      DEALLOC:
-      freeArgs(args);
+      arg_freetable((void**)&args, sizeof(T)/sizeof(void*));
       return retval;
     }
   public:
+    // Wrap Console.addCmd so that aliases can be registered without
+    // room for copy/paste or incomplete maintenance errors.
     static void addCmd(std::list<const char*> names, const char* description, T &help) {
       T::setArgs(help);
       for (const char* name : names) {
@@ -188,10 +179,29 @@ template <typename T> class Command {
       }
     }
 
+    // Adapt the internal execute command, to the external Console callback API.
     static int wrapper(int argc, char** argv) {
       return Command<T>::execute(argc, argv, T::setArgs, T::implementation);
     }
 };
+
+// Basic command implementation template
+/*
+struct cmdNoop_args {
+  // Add all command arguments here (in implicit order)
+  arg_end_t *end;
+  static void setArgs(struct cmdNoop_args &args) {
+    // Set all arg_xxx_t* that were defined
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdNoop_args &args) {
+    // Real command implementation goes here.
+    return 0;
+  }
+};
+static struct cmdNoop_args cmdNoopHelp;
+*/
+
 
 // Pin Resolution
 void initPins() {
