@@ -912,39 +912,50 @@ void cmdDf(char** argv, uint8_t argc) {
 }
 
 // WiFi Commands
-void cmdWifi(char** argv, uint8_t argc) {
-  if (argc < 2) {
+struct cmdWifi_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdWifi_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifi_args &args) {
     // Show status
-    Serial.println(F("\n  " CYAN "WiFi Status:" RESET));
-    Serial.printf("  Mode : %s\n",
+    printf("\n  " CYAN "WiFi Status:" RESET);
+    printf("  Mode : %s\n",
       WiFi.getMode() == WIFI_STA ? "Station" :
       WiFi.getMode() == WIFI_AP  ? "Access Point" :
       WiFi.getMode() == WIFI_AP_STA ? "AP+Station" : "Off");
     if (wifiConnected) {
-      Serial.printf("  SSID : %s\n", WiFi.SSID().c_str());
-      Serial.printf("  IP   : %s\n", WiFi.localIP().toString().c_str());
-      Serial.printf("  RSSI : %d dBm\n", WiFi.RSSI());
-      Serial.printf("  MAC  : %s\n", WiFi.macAddress().c_str());
-      Serial.printf("  GW   : %s\n", WiFi.gatewayIP().toString().c_str());
-      Serial.printf("  DNS  : %s\n", WiFi.dnsIP().toString().c_str());
+      printf("  SSID : %s\n", WiFi.SSID().c_str());
+      printf("  IP   : %s\n", WiFi.localIP().toString().c_str());
+      printf("  RSSI : %d dBm\n", WiFi.RSSI());
+      printf("  MAC  : %s\n", WiFi.macAddress().c_str());
+      printf("  GW   : %s\n", WiFi.gatewayIP().toString().c_str());
+      printf("  DNS  : %s\n", WiFi.dnsIP().toString().c_str());
     }
     if (apActive) {
-      Serial.printf("  AP   : %s  IP: %s  Clients: %d\n",
+      printf("  AP   : %s  IP: %s  Clients: %d\n",
                     apSSID.c_str(), WiFi.softAPIP().toString().c_str(),
                     WiFi.softAPgetStationNum());
     }
-    Serial.println();
-    return;
+    printf("\n");
+    return 0;
   }
+};
+static struct cmdWifi_args cmdWifiHelp;
 
-  String sub = String(argv[1]); sub.toLowerCase();
-
-  // wifi connect <ssid> <pass>
-  if (sub == "connect" || sub == "up") {
-    if (argc < 4) { Serial.println(F("Usage: wifi connect <SSID> <PASSWORD>")); return; }
-    Serial.printf("  Connecting to '%s'", argv[2]);
+struct cmdWifiConnect_args {
+  arg_str_t *ssid;
+  arg_str_t *pass;
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiConnect_args &args) {
+    args.ssid = arg_str1(NULL, NULL, "<ssid>", "The wireless network to connect to");
+    args.pass = arg_str1(NULL, NULL, "<pass>", "The password for the network");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiConnect_args &args) {
+    Serial.printf("  Connecting to '%s'", args.ssid->sval[0]);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(argv[2], argv[3]);
+    WiFi.begin(args.ssid->sval[0], args.pass->sval[0]);
     int retries = 0;
     while (WiFi.status() != WL_CONNECTED && retries < 30) {
       delay(500); Serial.print('.'); retries++;
@@ -952,63 +963,91 @@ void cmdWifi(char** argv, uint8_t argc) {
     if (WiFi.status() == WL_CONNECTED) {
       wifiConnected = true;
       staSSID = String(argv[2]);
-      Serial.printf("\n  " GREEN "Connected! IP: %s" RESET "\n\n", WiFi.localIP().toString().c_str());
+      printf("\n  " GREEN "Connected! IP: %s" RESET "\n\n", WiFi.localIP().toString().c_str());
       klog(("WiFi connected: " + staSSID).c_str());
     } else {
-      Serial.println(F("\n  " RED "Connection failed" RESET));
+      printf("\n  " RED "Connection failed" RESET"\n");
       WiFi.disconnect();
     }
-    return;
+    return 0;
   }
+};
+static struct cmdWifiConnect_args cmdWifiConnectHelp;
 
-  // wifi disconnect
-  if (sub == "disconnect" || sub == "down") {
+struct cmdWifiDisconnect_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiDisconnect_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiDisconnect_args &args) {
     WiFi.disconnect(true);
     wifiConnected = false;
-    Serial.println("  WiFi disconnected");
-    return;
+    printf("  WiFi disconnected\n");
+    return 0;
   }
+};
+static struct cmdWifiDisconnect_args cmdWifiDisconnectHelp;
 
-  // wifi ap <ssid> [pass]  — create soft AP
-  if (sub == "ap") {
-    if (argc < 3) { Serial.println(F("Usage: wifi ap <SSID> [PASSWORD]")); return; }
-    apSSID = String(argv[2]);
-    apPASS = (argc >= 4) ? String(argv[3]) : "";
+struct cmdWifiAp_args {
+  arg_str_t *ssid;
+  arg_str_t *pass;
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiAp_args &args) {
+    args.ssid = arg_str1(NULL, NULL, "<SSID>", "The name of the network to create");
+    args.pass = arg_str0(NULL, NULL, "password", "The password for the network");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiAp_args &args) {
+    apSSID = String(args.ssid->sval[0]);
+    apPASS = (args.pass->count) ? String(args.pass->sval[0]) : "";
     WiFi.mode(wifiConnected ? WIFI_AP_STA : WIFI_AP);
     bool ok = apPASS.length() > 0
                 ? WiFi.softAP(apSSID.c_str(), apPASS.c_str())
                 : WiFi.softAP(apSSID.c_str());
     apActive = ok;
-    if (ok) Serial.printf(GREEN "  AP '%s' started  IP: %s\n" RESET,
+    if (ok) printf(GREEN "  AP '%s' started  IP: %s\n" RESET,
                            apSSID.c_str(), WiFi.softAPIP().toString().c_str());
-    else     Serial.println(RED "  AP failed" RESET);
-    return;
+    else     printf(RED "  AP failed" RESET"\n");
+    return 0;
   }
+};
+static struct cmdWifiAp_args cmdWifiApHelp;
 
-  // wifi scan
-  if (sub == "scan") {
-    Serial.println(F("  Scanning..."));
+struct cmdWifiScan_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiScan_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiScan_args &args) {
+    printf("  Scanning...\n");
     int n = WiFi.scanNetworks();
-    if (n == 0) { Serial.println(F("  No networks found")); return; }
-    Serial.println(F("\n  " YELLOW "#  SSID                           RSSI  ENC" RESET));
-    Serial.println(F("  " GRAY "───────────────────────────────────────────────" RESET));
+    if (n == 0) { Serial.printf("  No networks found\n"); return 0; }
+    printf("\n  " YELLOW "#  SSID                           RSSI  ENC" RESET"\n");
+    printf("  " GRAY "───────────────────────────────────────────────" RESET"\n");
     for (int i = 0; i < n; i++) {
       const char* enc = WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? GREEN "Open" RESET : CYAN "WPA" RESET;
-      Serial.printf("  %-2d %-32s %4d  %s\n", i + 1,
+      printf("  %-2d %-32s %4d  %s\n", i + 1,
                     WiFi.SSID(i).c_str(), WiFi.RSSI(i), enc);
     }
     WiFi.scanDelete();
-    Serial.println();
-    return;
+    printf("\n");
+    return 0;
   }
+};
+static struct cmdWifiScan_args cmdWifiScanHelp;
 
-  // wifi ping <ip_or_host>
-  if (sub == "ping") {
-    if (argc < 3) { Serial.println(F("Usage: wifi ping <IP|host>")); return; }
-    if (!wifiConnected) { Serial.println(YELLOW "Not connected to WiFi" RESET); return; }
+struct cmdWifiPing_args {
+  arg_rex_t *ip;
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiPing_args &args) {
+    args.ip = arg_rex1(NULL, NULL, "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+", "<IP>", 0, "Address to ping");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiPing_args &args) {
+    if (!wifiConnected) { printf(YELLOW "Not connected to WiFi" RESET"\n"); return -1; }
     IPAddress ip;
-    if (!ip.fromString(argv[2])) { Serial.println(RED "Invalid IP. DNS not supported in minimal mode." RESET); return; }
-    Serial.printf("  Pinging %s:\n", argv[2]);
+    if (!ip.fromString(args.ip->sval[0])) { printf(RED "Invalid IP. DNS not supported in minimal mode." RESET"\n"); return -1; }
+    printf("  Pinging %s:\n", args.ip->sval[0]);
     for (int i = 0; i < 4; i++) {
       // ESP32 Arduino core does not include ping by default; send TCP probe instead
       WiFiClient client;
@@ -1016,78 +1055,95 @@ void cmdWifi(char** argv, uint8_t argc) {
       bool ok = client.connect(ip, 80);
       unsigned long rtt = millis() - t;
       client.stop();
-      if (ok) Serial.printf("  seq=%d time=%lums " GREEN "reachable" RESET "\n", i, rtt);
-      else    Serial.printf("  seq=%d " RED "no response" RESET "\n", i);
+      if (ok) printf("  seq=%d time=%lums " GREEN "reachable" RESET "\n", i, rtt);
+      else    printf("  seq=%d " RED "no response" RESET "\n", i);
       delay(500);
     }
-    return;
+    return 0;
   }
+};
+static struct cmdWifiPing_args cmdWifiPingHelp;
 
-  // wifi hostname [name]
-  if (sub == "hostname") {
-    if (argc >= 3) {
-      WiFi.setHostname(argv[2]);
-      Serial.printf("  Hostname set to '%s'\n", argv[2]);
+struct cmdWifiHostname_args {
+  arg_str_t *name;
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiHostname_args &args) {
+    args.name = arg_str0(NULL, NULL, "hostname", "Set the system hostname");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiHostname_args &args) {
+    if (args.name->count) {
+      WiFi.setHostname(args.name->sval[0]);
+      printf("  Hostname set to '%s'\n", args.name->sval[0]);
     } else {
-      Serial.printf("  Hostname: %s\n", WiFi.getHostname());
+      printf("  Hostname: %s\n", WiFi.getHostname());
     }
-    return;
+    return 0;
   }
+};
+static struct cmdWifiHostname_args cmdWifiHostnameHelp;
 
-  // wifi http start [port]  — minimal web server
-  if (sub == "http") {
-    if (argc < 3) { Serial.println(F("Usage: wifi http <start|stop> [port]")); return; }
-    String action = String(argv[2]); action.toLowerCase();
-    if (action == "start") {
-      if (!wifiConnected && !apActive) { Serial.println(YELLOW "Connect WiFi first" RESET); return; }
-      int port = (argc >= 4) ? safeAtoi(argv[3]) : 80;
-      if (httpServer) { delete httpServer; httpServer = nullptr; }
-      httpServer = new WebServer(port);
-      httpServer->on("/", []() {
-        String html = F("<!DOCTYPE html><html><head><title>KernelESP</title>"
-          "<style>body{font-family:monospace;background:#0d0d0d;color:#0f0;padding:2em}"
-          "h1{color:#0ff}pre{color:#fff;border:1px solid #0f0;padding:1em;}</style></head>"
-          "<body><h1>KernelESP v1.0</h1><pre>Status: Online\nHost: kernelesp\n"
-          "Uptime: ");
-        html += (millis() - bootTime) / 1000;
-        html += F("s\nFree RAM: ");
-        html += ESP.getFreeHeap() / 1024;
-        html += F(" KB\n</pre>"
-          "<p>Control via Serial terminal.</p></body></html>");
-        if (httpServer) httpServer->send(200, "text/html", html);
-      });
-      httpServer->begin();
-      httpRunning = true;
-      Serial.printf(GREEN "  HTTP server started on port %d\n  URL: http://%s/\n" RESET,
-                    port, wifiConnected ? WiFi.localIP().toString().c_str()
-                                        : WiFi.softAPIP().toString().c_str());
-    } else if (action == "stop") {
-      if (httpServer) { httpServer->stop(); delete httpServer; httpServer = nullptr; httpRunning = false; }
-      Serial.println("  HTTP server stopped");
-    }
-    return;
+struct cmdWifiHttpStart_args {
+  arg_int_t *port;
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiHttpStart_args &args) {
+    args.port = arg_int0(NULL, NULL, "port", "The port to listen on");
+    args.end = arg_end(2);
   }
-
-  // wifi mac
-  if (sub == "mac") {
-    Serial.printf("  STA MAC: %s\n", WiFi.macAddress().c_str());
-    Serial.printf("  AP  MAC: %s\n", WiFi.softAPmacAddress().c_str());
-    return;
+  static int implementation(int argc, char** argv, struct cmdWifiHttpStart_args &args) {
+    if (!wifiConnected && !apActive) { printf(YELLOW "Connect WiFi first" RESET"\n"); return -1; }
+    int port = (args.port->count) ? args.port->ival[0] : 80;
+    if (httpServer) { delete httpServer; httpServer = nullptr; }
+    httpServer = new WebServer(port);
+    httpServer->on("/", []() {
+      String html = F("<!DOCTYPE html><html><head><title>KernelESP</title>"
+        "<style>body{font-family:monospace;background:#0d0d0d;color:#0f0;padding:2em}"
+        "h1{color:#0ff}pre{color:#fff;border:1px solid #0f0;padding:1em;}</style></head>"
+        "<body><h1>KernelESP v1.0</h1><pre>Status: Online\nHost: kernelesp\n"
+        "Uptime: ");
+      html += (millis() - bootTime) / 1000;
+      html += F("s\nFree RAM: ");
+      html += ESP.getFreeHeap() / 1024;
+      html += F(" KB\n</pre>"
+        "<p>Control via Serial terminal.</p></body></html>");
+      if (httpServer) httpServer->send(200, "text/html", html);
+    });
+    httpServer->begin();
+    httpRunning = true;
+    printf(GREEN "  HTTP server started on port %d\n  URL: http://%s/\n" RESET,
+                  port, wifiConnected ? WiFi.localIP().toString().c_str()
+                                      : WiFi.softAPIP().toString().c_str());
+    return 0;
   }
+};
+static struct cmdWifiHttpStart_args cmdWifiHttpStartHelp;
 
-  // wifi help
-  Serial.println(F("\n  " CYAN "WiFi Commands:" RESET));
-  Serial.println(F("  wifi                          Show status"));
-  Serial.println(F("  wifi scan                     Scan networks"));
-  Serial.println(F("  wifi connect <SSID> <PASS>    Connect to AP"));
-  Serial.println(F("  wifi disconnect               Disconnect"));
-  Serial.println(F("  wifi ap <SSID> [PASS]         Start Soft-AP"));
-  Serial.println(F("  wifi ping <IP>                TCP connectivity check"));
-  Serial.println(F("  wifi http start [port]        Start HTTP server"));
-  Serial.println(F("  wifi http stop                Stop HTTP server"));
-  Serial.println(F("  wifi hostname [name]          Get/set hostname"));
-  Serial.println(F("  wifi mac                      Show MAC addresses\n"));
-}
+struct cmdWifiHttpStop_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiHttpStop_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiHttpStop_args &args) {
+    if (httpServer) { httpServer->stop(); delete httpServer; httpServer = nullptr; httpRunning = false; }
+    printf("  HTTP server stopped\n");
+    return 0;
+  }
+};
+static struct cmdWifiHttpStop_args cmdWifiHttpStopHelp;
+
+struct cmdWifiMac_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdWifiMac_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWifiMac_args &args) {
+    printf("  STA MAC: %s\n", WiFi.macAddress().c_str());
+    printf("  AP  MAC: %s\n", WiFi.softAPmacAddress().c_str());
+    return 0;
+  }
+};
+static struct cmdWifiMac_args cmdWifiMacHelp;
+
 
 // Scripting
 
@@ -1401,6 +1457,16 @@ void setup() {
 
   // WiFi
   //Console.addCmd("wifi", "", cmdWifi);
+  Command<struct cmdWifi_args>::addCmd({"wifi"}, "Show wifi status", cmdWifiHelp);
+  Command<struct cmdWifiConnect_args>::addCmd({"wifi-connect", "wifi-up"}, "Connect to AP", cmdWifiConnectHelp);
+  Command<struct cmdWifiDisconnect_args>::addCmd({"wifi-disconnect", "wifi-down"}, "Disconnect from AP", cmdWifiDisconnectHelp);
+  Command<struct cmdWifiAp_args>::addCmd({"wifi-ap"}, "Create an AP", cmdWifiApHelp);
+  Command<struct cmdWifiScan_args>::addCmd({"wifi-scan"}, "Scan for networks", cmdWifiScanHelp);
+  Command<struct cmdWifiPing_args>::addCmd({"wifi-ping"}, "TCP connectivity check", cmdWifiPingHelp);
+  Command<struct cmdWifiHostname_args>::addCmd({"wifi-hostname"}, "Get/set hostname", cmdWifiHostnameHelp);
+  Command<struct cmdWifiHttpStart_args>::addCmd({"wifi-http-start"}, "Start HTTP server", cmdWifiHttpStartHelp);
+  Command<struct cmdWifiHttpStop_args>::addCmd({"wifi-http-stop"}, "Stop HTTP server", cmdWifiHttpStopHelp);
+  Command<struct cmdWifiMac_args>::addCmd({"wifi-mac"}, "Show MAC addresses", cmdWifiMacHelp);
 
   // Scripting
   Command<struct cmdEval_args>::addCmd({"eval", "exec"}, "Run commands as though read from a script", cmdEvalHelp);
