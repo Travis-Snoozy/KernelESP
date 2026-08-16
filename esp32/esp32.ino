@@ -489,29 +489,39 @@ struct cmdDigitalRead_args {
 };
 static struct cmdDigitalRead_args cmdDigitalReadHelp;
 
-void cmdAnalogRead(char** argv, uint8_t argc) {
-  // ADC on ESP32: 12-bit (0-4095), 3.3V reference
-  if (argc < 2) {
-    Serial.println(F("\n  " YELLOW "ADC Channels:" RESET "\n"));
-    for (int i = 0; i < BOARD_ADC_COUNT; i++) {
-      // Skip any pins we shouldn't use.
-      if ((pinAssignment[boardAdcPins[i]] & PC_ANALOG) == 0) { continue; }
-      int raw = analogRead(boardAdcPins[i]);
-      float v  = raw * 3.3f / 4095.0f;
-      int bar  = map(raw, 0, 4095, 0, 30);
-      Serial.printf("  A%-2d/GPIO%-2d [", i, boardAdcPins[i]);
-      for (int b = 0; b < 30; b++) Serial.print(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
-      Serial.printf("] %4d (%.2fV)\n", raw, v);
-    }
-    Serial.println();
-    return;
+struct cmdAnalogRead_args {
+  arg_str_t *pin;
+  arg_end_t *end;
+  static void setArgs(struct cmdAnalogRead_args &args) {
+    args.pin = arg_str0(NULL, NULL, "<pin>", "Pin to read");
+    args.end = arg_end(2);
   }
-  int pin = resolvePin(argv[1], PC_ANALOG);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int raw = analogRead(pin);
-  float v  = raw * 3.3f / 4095.0f;
-  Serial.printf("GPIO%d ADC = %d (%.3fV / 3.3V)\n", pin, raw, v);
-}
+  static int implementation(int argc, char** argv, struct cmdAnalogRead_args &args) {
+    // ADC on ESP32: 12-bit (0-4095), 3.3V reference
+    if (!(args.pin->count)) {
+      printf("\n  " YELLOW "ADC Channels:" RESET "\n\n");
+      for (int i = 0; i < BOARD_ADC_COUNT; i++) {
+        // Skip any pins we shouldn't use.
+        if ((pinAssignment[boardAdcPins[i]] & PC_ANALOG) == 0) { continue; }
+        int raw = analogRead(boardAdcPins[i]);
+        float v  = raw * 3.3f / 4095.0f;
+        int bar  = map(raw, 0, 4095, 0, 30);
+        printf("  A%-2d/GPIO%-2d [", i, boardAdcPins[i]);
+        for (int b = 0; b < 30; b++) printf(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
+        printf("] %4d (%.2fV)\n", raw, v);
+      }
+      printf("\n");
+    } else {
+      int pin = resolvePin(args.pin->sval[0], PC_ANALOG);
+      if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      int raw = analogRead(pin);
+      float v  = raw * 3.3f / 4095.0f;
+      printf("GPIO%d ADC = %d (%.3fV / 3.3V)\n", pin, raw, v);
+    }
+    return 0;
+  }
+};
+static struct cmdAnalogRead_args cmdAnalogReadHelp;
 
 void cmdPWM(char** argv, uint8_t argc) {
   // ESP32 LEDC: channel-based PWM
@@ -1463,8 +1473,7 @@ void setup() {
   Command<struct cmdPinMode_args>::addCmd({"pinmode"}, "Set pin mode", cmdPinModeHelp);
   Command<struct cmdDigitalWrite_args>::addCmd({"write", "digitalwrite"}, "Digital write", cmdDigitalWriteHelp);
   Command<struct cmdDigitalRead_args>::addCmd({"read", "digitalread"}, "Digital read (all if no pin)", cmdDigitalReadHelp);
-  //Console.addCmd("aread", "", cmdAnalogRead);
-  //Console.addCmd("analogread", "", cmdAnalogRead);
+  Command<struct cmdAnalogRead_args>::addCmd({"aread", "analogread"}, "ADC read (0-4095, 3.3V)", cmdAnalogReadHelp);
   //Console.addCmd("pwm", "", cmdPWM);
   #ifdef SOC_DAC_SUPPORTED
   //Console.addCmd("dac", "", cmdDAC);
