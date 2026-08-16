@@ -613,23 +613,34 @@ void cmdNoTone(char** argv, uint8_t argc) {
   Serial.println("Tone stopped");
 }
 
-void cmdGPIO(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: gpio <pin> <on|off|toggle|read>")); return; }
-  int pin = resolvePin(argv[1], PC_DOUT);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  String act = String(argv[2]); act.toLowerCase();
-  if (act == "on"  || act == "1" || act == "high") { pinMode(pin, OUTPUT); digitalWrite(pin, HIGH); Serial.printf("GPIO%d → ON\n", pin); }
-  else if (act == "off" || act == "0" || act == "low") { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); Serial.printf("GPIO%d → OFF\n", pin); }
-  else if (act == "toggle") {
-    pinMode(pin, OUTPUT);
-    int nv = !digitalRead(pin); digitalWrite(pin, nv);
-    Serial.printf("GPIO%d toggled → %s\n", pin, nv ? "HIGH" : "LOW");
+struct cmdGPIO_args {
+  arg_str_t *pin;
+  arg_str_t *cmd;
+  arg_end_t *end;
+  static void setArgs(struct cmdGPIO_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "Pin to act on");
+    args.cmd = arg_str1(NULL, NULL, "<on|off|toggle|read>", "Action to perform");
+    args.end = arg_end(2);
   }
-  else if (act == "read") {
-    Serial.printf("GPIO%d = %s\n", pin, digitalRead(pin) ? "HIGH" : "LOW");
+  static int implementation(int argc, char** argv, struct cmdGPIO_args &args) {
+    int pin = resolvePin(args.pin->sval[0], PC_DOUT);
+    if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+    String act = String(args.cmd->sval[0]); act.toLowerCase();
+    if (act == "on"  || act == "1" || act == "high") { pinMode(pin, OUTPUT); digitalWrite(pin, HIGH); printf("GPIO%d → ON\n", pin); }
+    else if (act == "off" || act == "0" || act == "low") { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); printf("GPIO%d → OFF\n", pin); }
+    else if (act == "toggle") {
+      pinMode(pin, OUTPUT);
+      int nv = !digitalRead(pin); digitalWrite(pin, nv);
+      printf("GPIO%d toggled → %s\n", pin, nv ? "HIGH" : "LOW");
+    }
+    else if (act == "read") {
+      printf("GPIO%d = %s\n", pin, digitalRead(pin) ? "HIGH" : "LOW");
+    }
+    else { printf(RED "Unknown action. Use: on off toggle read" RESET"\n"); }
+    return 0;
   }
-  else { Serial.println(RED "Unknown action. Use: on off toggle read" RESET); }
-}
+};
+static struct cmdGPIO_args cmdGPIOHelp;
 
 void cmdDisco(char** argv, uint8_t argc) {
   int cycles = (argc >= 2) ? constrain(safeAtoi(argv[1]), 1, 30)  : 3;
@@ -1490,7 +1501,7 @@ void setup() {
   #ifdef SOC_DAC_SUPPORTED
   //Console.addCmd("dac", "", cmdDAC);
   #endif
-  //Console.addCmd("gpio", "", cmdGPIO);
+  Command<struct cmdGPIO_args>::addCmd({"gpio"}, "Quick GPIO", cmdGPIOHelp);
   //Console.addCmd("tone", "", cmdTone);
   //Console.addCmd("notone", "", cmdNoTone);
   //Console.addCmd("tsense", "", cmdTouch);
