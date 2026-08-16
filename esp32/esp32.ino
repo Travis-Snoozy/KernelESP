@@ -976,19 +976,27 @@ void cmdCp(char** argv, uint8_t argc) {
   Serial.printf("Copied %u bytes → '%s'\n", bytes, argv[2]);
 }
 
-void cmdDf(char** argv, uint8_t argc) {
+struct cmdDf_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdDf_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdDf_args &args) {
   size_t total = SPIFFS.totalBytes();
   size_t used  = SPIFFS.usedBytes();
   size_t free_ = total - used;
   int pct = (used * 100) / total;
   int bar = (used * 30) / total;
-  Serial.println(F("\n  " YELLOW "Filesystem (SPIFFS):" RESET));
-  Serial.print  (F("  ["));
-  for (int i = 0; i < 30; i++) Serial.print(i < bar ? GREEN "█" RESET : GRAY "░" RESET);
-  Serial.printf ("] %d%%\n", pct);
-  Serial.printf ("  Total: %u KB  Used: %u KB  Free: %u KB\n\n",
+  printf("\n  " YELLOW "Filesystem (SPIFFS):" RESET"\n");
+  printf  ("  [");
+  for (int i = 0; i < 30; i++) printf(i < bar ? GREEN "█" RESET : GRAY "░" RESET);
+  printf ("] %d%%\n", pct);
+  printf ("  Total: %u KB  Used: %u KB  Free: %u KB\n\n",
                  total/1024, used/1024, free_/1024);
-}
+    return 0;
+  }
+};
+static struct cmdDf_args cmdDfHelp;
 
 // WiFi Commands
 struct cmdWifi_args {
@@ -1316,56 +1324,80 @@ void cmdDelay(char** argv, uint8_t argc) {
 }
 
 // System Commands
-void cmdFree(char** argv, uint8_t argc) {
-  uint32_t heap    = ESP.getFreeHeap();
-  uint32_t minHeap = ESP.getMinFreeHeap();
-  uint32_t maxAlloc= ESP.getMaxAllocHeap();
-  Serial.println(F("\n  " YELLOW "Memory:" RESET));
-  Serial.printf("  Free heap      : %u bytes (%u KB)\n", heap, heap / 1024);
-  Serial.printf("  Min free heap  : %u bytes\n", minHeap);
-  Serial.printf("  Max alloc block: %u bytes\n", maxAlloc);
-  Serial.printf("  PSRAM          : %u bytes\n", ESP.getFreePsram());
-  cmdDf(argv, 0);
-}
-
-void cmdSysInfo(char** argv, uint8_t argc) {
-  unsigned long up  = (millis() - bootTime) / 1000;
-  uint8_t h = up / 3600, m = (up % 3600) / 60, s = up % 60;
-
-  Serial.println(F("\n"
-    CYAN  "  ██████╗ ███████╗██████╗ ██████╗ ██████╗ \n"
-    BCYAN "  ██╔════╝██╔════╝██╔══██╗╚════██╗╚════██╗\n"
-    CYAN  "  █████╗  ███████╗██████╔╝ █████╔╝ █████╔╝\n"
-    CYAN  "  ██╔══╝  ╚════██║██╔═══╝  ╚═══██╗ ██╔═══╝\n"
-    BCYAN "  ███████╗███████║██║     ███████╗███████║ \n"
-    GRAY  "  ╚══════╝╚══════╝╚═╝     ╚══════╝╚══════╝" RESET "\n"
-  ));
-
-  Serial.printf("  " YELLOW "OS     " RESET ": KernelESP v1.0\n");
-  Serial.printf("  " YELLOW "Host   " RESET ": %s\n", HOSTNAME);
-  Serial.printf("  " YELLOW "Board  " RESET ": "ARDUINO_BOARD" @ %d MHz\n", ESP.getCpuFreqMHz());
-  Serial.printf("  " YELLOW "Chip   " RESET ": %s  Rev%d  Cores:%d\n", ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores());
-  Serial.printf("  " YELLOW "Flash  " RESET ": %u KB  (mode:%d  speed:%d MHz)\n",
-                ESP.getFlashChipSize()/1024, ESP.getFlashChipMode(), ESP.getFlashChipSpeed()/1000000);
-  Serial.printf("  " YELLOW "RAM    " RESET ": %u KB free / PSRAM: %u KB\n",
-                ESP.getFreeHeap()/1024, ESP.getFreePsram()/1024);
-  Serial.printf("  " YELLOW "SPIFFS " RESET ": %u / %u KB\n",
-                SPIFFS.usedBytes()/1024, SPIFFS.totalBytes()/1024);
-  Serial.printf("  " YELLOW "Uptime " RESET ": %dh %dm %ds\n", h, m, s);
-  Serial.printf("  " YELLOW "WiFi   " RESET ": %s\n",
-                wifiConnected ? (GREEN + WiFi.SSID() + "  " + WiFi.localIP().toString() + RESET).c_str()
-                              : RED "Offline" RESET);
-  Serial.println();
-}
-
-void cmdDmesg(char** argv, uint8_t argc) {
-  Serial.println(F("\n  " YELLOW "Kernel Log:" RESET "\n"));
-  for (uint8_t i = 0; i < dmesgCount; i++) {
-    uint8_t idx = (dmesgHead - dmesgCount + i + DMESG_LINES) % DMESG_LINES;
-    Serial.printf("  " GRAY "[%4lus]" RESET " %s\n", dmesgBuf[idx].ts, dmesgBuf[idx].msg);
+struct cmdFree_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdFree_args &args) {
+    args.end = arg_end(2);
   }
-  Serial.println();
-}
+  static int implementation(int argc, char** argv, struct cmdFree_args &args) {
+    uint32_t heap    = ESP.getFreeHeap();
+    uint32_t minHeap = ESP.getMinFreeHeap();
+    uint32_t maxAlloc= ESP.getMaxAllocHeap();
+    Serial.println(F("\n  " YELLOW "Memory:" RESET));
+    Serial.printf("  Free heap      : %u bytes (%u KB)\n", heap, heap / 1024);
+    Serial.printf("  Min free heap  : %u bytes\n", minHeap);
+    Serial.printf("  Max alloc block: %u bytes\n", maxAlloc);
+    Serial.printf("  PSRAM          : %u bytes\n", ESP.getFreePsram());
+    Console.run("df");
+    return 0;
+  }
+};
+static struct cmdFree_args cmdFreeHelp;
+
+struct cmdSysInfo_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdSysInfo_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdSysInfo_args &args) {
+    unsigned long up  = (millis() - bootTime) / 1000;
+    uint8_t h = up / 3600, m = (up % 3600) / 60, s = up % 60;
+
+    printf("\n"
+      CYAN  "  ██████╗ ███████╗██████╗ ██████╗ ██████╗ \n"
+      BCYAN "  ██╔════╝██╔════╝██╔══██╗╚════██╗╚════██╗\n"
+      CYAN  "  █████╗  ███████╗██████╔╝ █████╔╝ █████╔╝\n"
+      CYAN  "  ██╔══╝  ╚════██║██╔═══╝  ╚═══██╗ ██╔═══╝\n"
+      BCYAN "  ███████╗███████║██║     ███████╗███████║ \n"
+      GRAY  "  ╚══════╝╚══════╝╚═╝     ╚══════╝╚══════╝" RESET "\n\n"
+    );
+
+    printf("  " YELLOW "OS     " RESET ": KernelESP v1.0\n");
+    printf("  " YELLOW "Host   " RESET ": %s\n", HOSTNAME);
+    printf("  " YELLOW "Board  " RESET ": "ARDUINO_BOARD" @ %d MHz\n", ESP.getCpuFreqMHz());
+    printf("  " YELLOW "Chip   " RESET ": %s  Rev%d  Cores:%d\n", ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores());
+    printf("  " YELLOW "Flash  " RESET ": %u KB  (mode:%d  speed:%d MHz)\n",
+                  ESP.getFlashChipSize()/1024, ESP.getFlashChipMode(), ESP.getFlashFrequencyMHz());
+    printf("  " YELLOW "RAM    " RESET ": %u KB free / PSRAM: %u KB\n",
+                  ESP.getFreeHeap()/1024, ESP.getFreePsram()/1024);
+    printf("  " YELLOW "SPIFFS " RESET ": %u / %u KB\n",
+                  SPIFFS.usedBytes()/1024, SPIFFS.totalBytes()/1024);
+    printf("  " YELLOW "Uptime " RESET ": %dh %dm %ds\n", h, m, s);
+    printf("  " YELLOW "WiFi   " RESET ": %s\n",
+                  wifiConnected ? (GREEN + WiFi.SSID() + "  " + WiFi.localIP().toString() + RESET).c_str()
+                                : RED "Offline" RESET);
+    printf("\n");
+    return 0;
+  }
+};
+static struct cmdSysInfo_args cmdSysInfoHelp;
+
+struct cmdDmesg_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdDmesg_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdDmesg_args &args) {
+    printf("\n  " YELLOW "Kernel Log:" RESET "\n\n");
+    for (uint8_t i = 0; i < dmesgCount; i++) {
+      uint8_t idx = (dmesgHead - dmesgCount + i + DMESG_LINES) % DMESG_LINES;
+      printf("  " GRAY "[%4lus]" RESET " %s\n", dmesgBuf[idx].ts, dmesgBuf[idx].msg);
+    }
+    printf("\n");
+    return 0;
+  }
+};
+static struct cmdDmesg_args cmdDmesgHelp;
 
 struct cmdReboot_args {
   arg_end_t *end;
@@ -1383,18 +1415,70 @@ struct cmdReboot_args {
 };
 static struct cmdReboot_args cmdRebootHelp;
 
-void cmdWhoami(char** argv, uint8_t argc) { Serial.println("root"); }
-void cmdUname(char** argv, uint8_t argc)  { Serial.println("KernelESP v1.0 ESP32 xtensa"); }
-void cmdUptime(char** argv, uint8_t argc) {
-  unsigned long t = (millis() - bootTime) / 1000;
-  Serial.printf("up %dh %dm %ds\n", (int)(t/3600), (int)((t%3600)/60), (int)(t%60));
-}
-void cmdPwd(char** argv, uint8_t argc) { Serial.println(currentPath); }
+struct cmdWhoami_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdWhoami_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWhoami_args &args) {
+    printf("root\n");
+    return 0;
+  }
+};
+static struct cmdWhoami_args cmdWhoamiHelp;
+
+struct cmdUname_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdUname_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdUname_args &args) {
+    printf("KernelESP v1.0 ESP32 xtensa\n");
+    return 0;
+  }
+};
+static struct cmdUname_args cmdUnameHelp;
+
+struct cmdUptime_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdUptime_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdUptime_args &args) {
+    unsigned long t = (millis() - bootTime) / 1000;
+    printf("up %dh %dm %ds\n", (int)(t/3600), (int)((t%3600)/60), (int)(t%60));
+    return 0;
+  }
+};
+static struct cmdUptime_args cmdUptimeHelp;
+
+struct cmdPwd_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdPwd_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdPwd_args &args) {
+    printf("%s\n", currentPath);
+    return 0;
+  }
+};
+static struct cmdPwd_args cmdPwdHelp;
 void cmdEcho(char** argv, uint8_t argc) {
   for (int i = 1; i < argc; i++) { if (i > 1) Serial.print(' '); Serial.print(argv[i]); }
   Serial.println();
 }
-void cmdClear(char** argv, uint8_t argc) { showLogo(); }
+
+struct cmdClear_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdClear_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdClear_args &args) {
+    showLogo();
+    return 0;
+  }
+};
+static struct cmdClear_args cmdClearHelp;
 
 struct cmdWave_args {
   arg_end_t *end;
@@ -1528,7 +1612,7 @@ void setup() {
   //Console.addCmd("del", "", cmdRM);
   //Console.addCmd("mv", "", cmdMv);
   //Console.addCmd("cp", "", cmdCp);
-  //Console.addCmd("df", "", cmdDf);
+  Command<struct cmdDf_args>::addCmd({"df"}, "Show how full the disk is", cmdDfHelp);
   //Console.addCmd("echo", "", cmdEcho);
 
   // WiFi
@@ -1553,19 +1637,13 @@ void setup() {
 //  Console.addCmd("sleep", "", cmdDelay);
 
   // System
-//  Console.addCmd("help", "", cmdHelp);
-//  Console.addCmd("?", "", cmdHelp);
-//  Console.addCmd("sysinfo", "", cmdSysInfo);
-//  Console.addCmd("neofetch", "", cmdSysInfo);
-//  Console.addCmd("dmesg", "", cmdDmesg);
-//  Console.addCmd("log", "", cmdDmesg);
-//  Console.addCmd("free", "", cmdFree);
-//  Console.addCmd("mem", "", cmdFree);
-//  Console.addCmd("uptime", "", cmdUptime);
-//  Console.addCmd("whoami", "", cmdWhoami);
-//  Console.addCmd("uname", "", cmdUname);
-//  Console.addCmd("clear", "", cmdClear);
-//  Console.addCmd("cls", "", cmdClear);
+  Command<struct cmdSysInfo_args>::addCmd({"sysinfo", "neofetch"}, "Show system information", cmdSysInfoHelp);
+  Command<struct cmdDmesg_args>::addCmd({"dmesg", "log"}, "Show system event logs", cmdDmesgHelp);
+  Command<struct cmdFree_args>::addCmd({"free", "mem"}, "Show memory usage", cmdFreeHelp);
+  Command<struct cmdUptime_args>::addCmd({"uptime"}, "Show how long system has been running", cmdUptimeHelp);
+  Command<struct cmdWhoami_args>::addCmd({"whoami"}, "Show current user name", cmdWhoamiHelp);
+  Command<struct cmdUname_args>::addCmd({"uname"}, "Show current kernel name", cmdUnameHelp);
+  Command<struct cmdClear_args>::addCmd({"clear", "cls"}, "Clear the screen", cmdClearHelp);
   Command<struct cmdReboot_args>::addCmd({"reboot", "reset"}, "Reboot the processor", cmdRebootHelp);
   Command<struct cmdWave_args>::addCmd({"wave"}, "Display a wave in ASCII art", cmdWaveHelp);
   Console.addHelpCmd();
