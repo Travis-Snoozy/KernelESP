@@ -361,61 +361,76 @@ void showLogo() {
 }
 
 // Hardware Commands
+struct cmdPinMode_args {
+  arg_str_t *pin;
+  arg_str_t *mode;
+  arg_end_t *end;
+  static void setArgs(struct cmdPinMode_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "The pin to set the mode on");
+    args.mode = arg_str1(NULL, NULL, "<input|output|pullup|pulldown|analog|touch|ledpwm|dac>", "The mode to assign to the pin");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdPinMode_args &args) {
+    int pin = resolvePin(args.pin->sval[0]);
+    if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+    String m = String(args.mode->sval[0]); m.toLowerCase();
+    if (m == "output" || m == "out") {
+      if ((pinCapabilities[pin] & PC_DOUT) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_DOUT;
+      pinMode(pin, OUTPUT);
+      printf("GPIO%d → OUTPUT\n", pin);
+    }
+    else if (m == "input") {
+      if ((pinCapabilities[pin] & PC_DIN) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_DIN;
+      pinMode(pin, INPUT);
+      printf("GPIO%d → INPUT\n", pin);
+    }
+    else if (m == "pullup"   || m == "input_pullup") {
+      if ((pinCapabilities[pin] & PC_DIN) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_DIN;
+      pinMode(pin, INPUT_PULLUP);
+      printf("GPIO%d → INPUT_PULLUP\n", pin);
+    }
+    else if (m == "pulldown" || m == "input_pulldown") {
+      if ((pinCapabilities[pin] & PC_DIN) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_DIN;
+      pinMode(pin, INPUT_PULLDOWN);
+      printf("GPIO%d → INPUT_PULLDOWN\n", pin);
+    }
+    else if (m == "analog") {
+      if ((pinCapabilities[pin] & PC_ANALOG) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_ANALOG;
+      analogRead(pin);
+      printf("GPIO%d → ANALOG INPUT\n", pin);
+    }
+    else if (m == "touch") {
+      if ((pinCapabilities[pin] & PC_TOUCH) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_TOUCH;
+      touchRead(pin);
+      printf("GPIO%d → TOUCH INPUT\n", pin);
+    }
+    else if (m == "ledpwm") {
+      if ((pinCapabilities[pin] & PC_LEDPWM) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_LEDPWM;
+      pinMode(pin, OUTPUT);
+      printf("GPIO%d → LED PWM OUTPUT\n", pin);
+    }
+    else if (m == "dac") {
+      if ((pinCapabilities[pin] & PC_DAC) == 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      pinAssignment[pin] = PC_DAC;
+      pinMode(pin, OUTPUT);
+      printf("GPIO%d → ANALOG OUTPUT\n", pin);
+    }
+    else { printf(RED "Unknown mode" RESET"\n"); return -1; }
+    char buf[48]; snprintf(buf, sizeof(buf), "pinMode GPIO%d %s", pin, argv[2]); klog(buf);
+    return 0;
+  }
+};
+static struct cmdPinMode_args cmdPinModeHelp;
 void cmdPinMode(char** argv, uint8_t argc) {
   if (argc < 3) { Serial.println(F("Usage: pinmode <pin> <input|output|pullup|pulldown|analog|touch|ledpwm|dac>")); return; }
-  int pin = resolvePin(argv[1]);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  String m = String(argv[2]); m.toLowerCase();
-  if (m == "output" || m == "out") {
-    if ((pinCapabilities[pin] & PC_DOUT) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_DOUT;
-    pinMode(pin, OUTPUT);
-    Serial.printf("GPIO%d → OUTPUT\n", pin);
-  }
-  else if (m == "input") {
-    if ((pinCapabilities[pin] & PC_DIN) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_DIN;
-    pinMode(pin, INPUT);
-    Serial.printf("GPIO%d → INPUT\n", pin);
-  }
-  else if (m == "pullup"   || m == "input_pullup") {
-    if ((pinCapabilities[pin] & PC_DIN) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_DIN;
-    pinMode(pin, INPUT_PULLUP);
-    Serial.printf("GPIO%d → INPUT_PULLUP\n", pin);
-  }
-  else if (m == "pulldown" || m == "input_pulldown") {
-    if ((pinCapabilities[pin] & PC_DIN) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_DIN;
-    pinMode(pin, INPUT_PULLDOWN);
-    Serial.printf("GPIO%d → INPUT_PULLDOWN\n", pin);
-  }
-  else if (m == "analog") {
-    if ((pinCapabilities[pin] & PC_ANALOG) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_ANALOG;
-    analogRead(pin);
-    Serial.printf("GPIO%d → ANALOG INPUT\n", pin);
-  }
-  else if (m == "touch") {
-    if ((pinCapabilities[pin] & PC_TOUCH) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_TOUCH;
-    touchRead(pin);
-    Serial.printf("GPIO%d → TOUCH INPUT\n", pin);
-  }
-  else if (m == "ledpwm") {
-    if ((pinCapabilities[pin] & PC_LEDPWM) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_LEDPWM;
-    pinMode(pin, OUTPUT);
-    Serial.printf("GPIO%d → LED PWM OUTPUT\n", pin);
-  }
-  else if (m == "dac") {
-    if ((pinCapabilities[pin] & PC_DAC) == 0) { Serial.println(RED "Invalid pin" RESET); return; }
-    pinAssignment[pin] = PC_DAC;
-    pinMode(pin, OUTPUT);
-    Serial.printf("GPIO%d → ANALOG OUTPUT\n", pin);
-  }
-  else { Serial.println(RED "Unknown mode" RESET); return; }
-  char buf[48]; snprintf(buf, sizeof(buf), "pinMode GPIO%d %s", pin, argv[2]); klog(buf);
+
 }
 
 void cmdDigitalWrite(char** argv, uint8_t argc) {
@@ -697,32 +712,42 @@ void cmdMonitor(char** argv, uint8_t argc) {
   Serial.println(GREEN "  Monitor done" RESET "\n");
 }
 
-void cmdPins(char** argv, uint8_t argc) {
-  Serial.println("\n  " YELLOW "Pin configuration:" RESET);
-  Serial.println("  Pin    │ Capabilities │ Mode");
-  Serial.println("  ───────┼──────────────┼───────────────");
-  for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
-    // Skip disabled/unavailable pins
-    if (pinAssignment[i] == 0) { continue; }
-    const char* mode;
-    switch(pinAssignment[i]) {
-      case PC_DIN: mode = "Digital input"; break;
-      case PC_DOUT: mode = "Digital output"; break;
-      case PC_LEDPWM: mode = "LED PWM output"; break;
-      case PC_TOUCH: mode = "Touch input"; break;
-      case PC_ANALOG: mode = "Analog input"; break;
-      default: mode = RED "ERROR" RESET; break;
-    }
-    Serial.printf("  GPIO%-2d │ %si%so%sl%st%sa" RESET "        │ %s\n",
-      i,
-      (pinCapabilities[i] & PC_DIN) ? GREEN : GRAY,
-      (pinCapabilities[i] & PC_DOUT) ? GREEN : GRAY,
-      (pinCapabilities[i] & PC_LEDPWM) ? GREEN : GRAY,
-      (pinCapabilities[i] & PC_TOUCH) ? GREEN : GRAY,
-      (pinCapabilities[i] & PC_ANALOG) ? GREEN : GRAY,
-      mode);
+struct cmdPins_args {
+  // Add all command arguments here (in implicit order)
+  arg_end_t *end;
+  static void setArgs(struct cmdPins_args &args) {
+    // Set all arg_xxx_t* that were defined
+    args.end = arg_end(2);
   }
-}
+  static int implementation(int argc, char** argv, struct cmdPins_args &args) {
+    printf("\n  " YELLOW "Pin configuration:\n" RESET);
+    printf("  Pin    │ Capabilities │ Mode\n");
+    printf("  ───────┼──────────────┼───────────────\n");
+    for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
+      // Skip disabled/unavailable pins
+      if (pinAssignment[i] == 0) { continue; }
+      const char* mode;
+      switch(pinAssignment[i]) {
+        case PC_DIN: mode = "Digital input"; break;
+        case PC_DOUT: mode = "Digital output"; break;
+        case PC_LEDPWM: mode = "LED PWM output"; break;
+        case PC_TOUCH: mode = "Touch input"; break;
+        case PC_ANALOG: mode = "Analog input"; break;
+        default: mode = RED "ERROR" RESET; break;
+      }
+      printf("  GPIO%-2d │ %si%so%sl%st%sa" RESET "        │ %s\n",
+        i,
+        (pinCapabilities[i] & PC_DIN) ? GREEN : GRAY,
+        (pinCapabilities[i] & PC_DOUT) ? GREEN : GRAY,
+        (pinCapabilities[i] & PC_LEDPWM) ? GREEN : GRAY,
+        (pinCapabilities[i] & PC_TOUCH) ? GREEN : GRAY,
+        (pinCapabilities[i] & PC_ANALOG) ? GREEN : GRAY,
+        mode);
+    }
+    return 0;
+  }
+};
+static struct cmdPins_args cmdPinsHelp;
 
 // Filesystem Commands
 void cmdLS(char** argv, uint8_t argc) {
@@ -1414,7 +1439,7 @@ void setup() {
   Console.begin();
   Console.setMaxHistory(16);
   // Hardware
-  //Console.addCmd("pinmode", "", cmdPinMode);
+  Command<struct cmdPinMode_args>::addCmd({"pinmode"}, "Set pin mode", cmdPinModeHelp);
   //Console.addCmd("write", "", cmdDigitalWrite);
   //Console.addCmd("digitalwrite", "", cmdDigitalWrite);
   //Console.addCmd("read", "", cmdDigitalRead);
@@ -1434,7 +1459,7 @@ void setup() {
   //Console.addCmd("sensor", "", cmdSensor);
   //Console.addCmd("scope", "", cmdScope);
   //Console.addCmd("monitor", "", cmdMonitor);
-  //Console.addCmd("pins", "", cmdPins);
+  Command<struct cmdPins_args>::addCmd({"pins"}, "Show current pin configuration", cmdPinsHelp);
 
   // Filesystem
   //Console.addCmd("ls", "", cmdLS);
