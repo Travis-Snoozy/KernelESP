@@ -433,40 +433,61 @@ void cmdPinMode(char** argv, uint8_t argc) {
 
 }
 
-void cmdDigitalWrite(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: write <pin> <HIGH|LOW|1|0|on|off>")); return; }
-  int pin = resolvePin(argv[1], PC_DOUT);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  String v = String(argv[2]); v.toLowerCase();
-  int val = (v == "high" || v == "1" || v == "on") ? HIGH : LOW;
-  pinMode(pin, OUTPUT);
-  digitalWrite(pin, val);
-  Serial.printf("GPIO%d = %s\n", pin, val ? "HIGH" : "LOW");
-}
-
-void cmdDigitalRead(char** argv, uint8_t argc) {
-  if (argc < 2) {
-    Serial.println(F("\n  " YELLOW "GPIO State:" RESET "\n"));
-    Serial.println(F("  Pin     State  │  Pin  State"));
-    Serial.println(F("  ───────────────┼─────────────"));
-    int printcount = 0;
-    for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
-      // Only display pins configured for digital input or output
-      if ((pinAssignment[i] & (PC_DIN | PC_DOUT)) == 0) { continue; }
-      int v = digitalRead(i);
-      Serial.printf("  GPIO%-2d  %s%-5s" RESET, i, v ? ((pinAssignment[i] == PC_DIN) ? GREEN : RED) : ((pinAssignment[i] == PC_DIN) ? GRAY : WHITE), v ? "HIGH" : "LOW");
-      if (printcount % 2 == 0) Serial.print("  │");
-      else Serial.println();
-      printcount++;
-    }
-    Serial.println(F("\n"));
-    return;
+struct cmdDigitalWrite_args {
+  arg_str_t *pin;
+  arg_str_t *value;
+  arg_end_t *end;
+  static void setArgs(struct cmdDigitalWrite_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "Pin to write to");
+    args.value = arg_str1(NULL, NULL, "<HIGH|LOW|1|0|on|off>", "Value to write");
+    args.end = arg_end(2);
   }
-  int pin = resolvePin(argv[1], PC_DIN | PC_DOUT);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int v = digitalRead(pin);
-  Serial.printf("GPIO%d = %s%s" RESET "\n", pin, v ? ((pinAssignment[pin] == PC_DIN) ? GREEN : RED) : ((pinAssignment[pin] == PC_DIN) ? GRAY : WHITE), v ? "HIGH" : "LOW");
-}
+    static int implementation(int argc, char** argv, struct cmdDigitalWrite_args &args) {
+    int pin = resolvePin(args.pin->sval[0], PC_DOUT);
+    if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+    String v = String(args.value->sval[0]); v.toLowerCase();
+    int val = (v == "high" || v == "1" || v == "on") ? HIGH : LOW;
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, val);
+    printf("GPIO%d = %s\n", pin, val ? "HIGH" : "LOW");
+    return 0;
+  }
+};
+static struct cmdDigitalWrite_args cmdDigitalWriteHelp;
+
+struct cmdDigitalRead_args {
+  arg_str_t *pin;
+  arg_end_t *end;
+  static void setArgs(struct cmdDigitalRead_args &args) {
+    args.pin = arg_str0(NULL, NULL, "<pin>", "Pin to read");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdDigitalRead_args &args) {
+    if (!(args.pin->count)) {
+      printf("\n  " YELLOW "GPIO State:" RESET "\n\n");
+      printf("  Pin     State  │  Pin  State\n");
+      printf("  ───────────────┼─────────────\n");
+      int printcount = 0;
+      for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
+        // Only display pins configured for digital input or output
+        if ((pinAssignment[i] & (PC_DIN | PC_DOUT)) == 0) { continue; }
+        int v = digitalRead(i);
+        printf("  GPIO%-2d  %s%-5s" RESET, i, v ? ((pinAssignment[i] == PC_DIN) ? GREEN : RED) : ((pinAssignment[i] == PC_DIN) ? GRAY : WHITE), v ? "HIGH" : "LOW");
+        if (printcount % 2 == 0) printf("  │");
+        else printf("\n");
+        printcount++;
+      }
+      printf("\n\n");
+    } else {
+      int pin = resolvePin(args.pin->sval[0], PC_DIN | PC_DOUT);
+      if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+      int v = digitalRead(pin);
+      printf("GPIO%d = %s%s" RESET "\n", pin, v ? ((pinAssignment[pin] == PC_DIN) ? GREEN : RED) : ((pinAssignment[pin] == PC_DIN) ? GRAY : WHITE), v ? "HIGH" : "LOW");
+    }
+    return 0;
+  }
+};
+static struct cmdDigitalRead_args cmdDigitalReadHelp;
 
 void cmdAnalogRead(char** argv, uint8_t argc) {
   // ADC on ESP32: 12-bit (0-4095), 3.3V reference
@@ -1440,10 +1461,8 @@ void setup() {
   Console.setMaxHistory(16);
   // Hardware
   Command<struct cmdPinMode_args>::addCmd({"pinmode"}, "Set pin mode", cmdPinModeHelp);
-  //Console.addCmd("write", "", cmdDigitalWrite);
-  //Console.addCmd("digitalwrite", "", cmdDigitalWrite);
-  //Console.addCmd("read", "", cmdDigitalRead);
-  //Console.addCmd("digitalread", "", cmdDigitalRead);
+  Command<struct cmdDigitalWrite_args>::addCmd({"write", "digitalwrite"}, "Digital write", cmdDigitalWriteHelp);
+  Command<struct cmdDigitalRead_args>::addCmd({"read", "digitalread"}, "Digital read (all if no pin)", cmdDigitalReadHelp);
   //Console.addCmd("aread", "", cmdAnalogRead);
   //Console.addCmd("analogread", "", cmdAnalogRead);
   //Console.addCmd("pwm", "", cmdPWM);
