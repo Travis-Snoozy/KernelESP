@@ -523,22 +523,34 @@ struct cmdAnalogRead_args {
 };
 static struct cmdAnalogRead_args cmdAnalogReadHelp;
 
-void cmdPWM(char** argv, uint8_t argc) {
-  // ESP32 LEDC: channel-based PWM
-  if (argc < 3) {
-    Serial.println(F("Usage: pwm <pin> <duty 0-255> [freq_hz] [channel 0-15]"));
-    return;
+struct cmdPWM_args {
+  arg_str_t *pin;
+  arg_int_t *duty;
+  arg_int_t *freq;
+  arg_int_t *channel;
+  arg_end_t *end;
+  static void setArgs(struct cmdPWM_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "Output pin");
+    args.duty = arg_int1(NULL, NULL, "<duty>", "Duty cycle 0-255");
+    args.freq = arg_int0(NULL, NULL, "[freq_hz]", "Frequency");
+    args.channel = arg_int0(NULL, NULL, "[channel]", "PWM channel 0-15");
+    args.end = arg_end(2);
   }
-  int pin  = resolvePin(argv[1], PC_LEDPWM);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int duty = constrain(safeAtoi(argv[2]), 0, 255);
-  int freq = (argc >= 4) ? safeAtoi(argv[3]) : 5000;
-  int ch   = (argc >= 5) ? constrain(safeAtoi(argv[4]), 0, 15) : 0;
-  ledcAttachChannel(pin, freq, 8, ch);
-  ledcWrite(pin, duty);
-  float pct = duty * 100.0f / 255.0f;
-  Serial.printf("GPIO%d PWM ch%d: duty=%d (%.0f%%) freq=%dHz\n", pin, ch, duty, pct, freq);
-}
+  static int implementation(int argc, char** argv, struct cmdPWM_args &args) {
+    // ESP32 LEDC: channel-based PWM
+    int pin  = resolvePin(args.pin->sval[0], PC_LEDPWM);
+    if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+    int duty = constrain(args.duty->ival[0], 0, 255);
+    int freq = (args.freq->count) ? args.freq->ival[0] : 5000;
+    int ch   = (args.channel->count) ? constrain(args.channel->ival[0], 0, 15) : 0;
+    ledcAttachChannel(pin, freq, 8, ch);
+    ledcWrite(pin, duty);
+    float pct = duty * 100.0f / 255.0f;
+    printf("GPIO%d PWM ch%d: duty=%d (%.0f%%) freq=%dHz\n", pin, ch, duty, pct, freq);
+    return 0;
+  }
+};
+static struct cmdPWM_args cmdPWMHelp;
 
 #ifdef SOC_DAC_SUPPORTED
 void cmdDAC(char** argv, uint8_t argc) {
@@ -1474,7 +1486,7 @@ void setup() {
   Command<struct cmdDigitalWrite_args>::addCmd({"write", "digitalwrite"}, "Digital write", cmdDigitalWriteHelp);
   Command<struct cmdDigitalRead_args>::addCmd({"read", "digitalread"}, "Digital read (all if no pin)", cmdDigitalReadHelp);
   Command<struct cmdAnalogRead_args>::addCmd({"aread", "analogread"}, "ADC read (0-4095, 3.3V)", cmdAnalogReadHelp);
-  //Console.addCmd("pwm", "", cmdPWM);
+  Command<struct cmdPWM_args>::addCmd({"pwm"}, "LEDC PWM output", cmdPWMHelp);
   #ifdef SOC_DAC_SUPPORTED
   //Console.addCmd("dac", "", cmdDAC);
   #endif
