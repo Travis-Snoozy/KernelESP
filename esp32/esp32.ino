@@ -310,7 +310,7 @@ bool isDirectory(const String& path) {
 
 void initFilesystem() {
   if (!SPIFFS.begin(true)) {
-    Serial.println(RED "SPIFFS mount failed — formatting..." RESET);
+    printf(RED "SPIFFS mount failed — formatting..." RESET"\n");
     SPIFFS.format();
     SPIFFS.begin(true);
   }
@@ -804,177 +804,288 @@ struct cmdPins_args {
 static struct cmdPins_args cmdPinsHelp;
 
 // Filesystem Commands
-void cmdLS(char** argv, uint8_t argc) {
-  String target = (argc >= 2) ? buildPath(argv[1]) : String(currentPath);
-  if (!target.endsWith("/")) target += "/";
-
-  Serial.println(F("\n  " YELLOW "Name                 Size    Modified" RESET));
-  Serial.println(F("  " GRAY "───────────────────────────────────────────" RESET));
-
-  int count = 0;
-  File root = SPIFFS.open("/");
-  File f    = root.openNextFile();
-  while (f) {
-    String fp = String(f.name()); // e.g. "/home/file.txt"
-    // Show only direct children of target
-    if (fp.startsWith(target)) {
-      String rest = fp.substring(target.length());
-      // Skip if rest contains another slash (grandchild)
-      if (rest.length() > 0 && rest.indexOf('/') < 0) {
-        bool isDir = rest.endsWith(".dir") || f.isDirectory();
-        if (rest == ".dir") { f = root.openNextFile(); continue; } // skip dir markers
-        Serial.print("  ");
-        if (isDir) {
-          Serial.print(BLUE); Serial.printf("%-22s" RESET, (rest + "/").c_str());
-          Serial.println(GRAY "  <DIR>" RESET);
-        } else {
-          Serial.printf(WHITE "%-22s" RESET, rest.c_str());
-          Serial.printf("%6d bytes\n", (int)f.size());
-        }
-        count++;
-      }
-    }
-    f = root.openNextFile();
+struct cmdLs_args {
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdLs_args &args) {
+    args.dst = arg_str0(NULL, NULL, "[dst]", "Directory to list the contents of");
+    args.end = arg_end(2);
   }
+  static int implementation(int argc, char** argv, struct cmdLs_args &args) {
+    String target = (args.dst->count) ? buildPath(args.dst->sval[0]) : String(currentPath);
+    if (!target.endsWith("/")) target += "/";
 
-  if (count == 0) Serial.println(GRAY "  (empty)" RESET);
-  // Show total SPIFFS usage
-  size_t total = SPIFFS.totalBytes();
-  size_t used  = SPIFFS.usedBytes();
-  Serial.printf("\n  " GRAY "%d items  │  SPIFFS: %u / %u KB used" RESET "\n\n",
-                count, used / 1024, total / 1024);
-}
+    printf("\n  " YELLOW "Name                 Size    Modified" RESET"\n");
+    printf("  " GRAY "───────────────────────────────────────────" RESET"\n");
 
-void cmdCD(char** argv, uint8_t argc) {
-  if (argc < 2 || strcmp(argv[1], "/") == 0) {
-    strncpy(currentPath, "/", PATH_LEN - 1); return;
-  }
-  if (strcmp(argv[1], "..") == 0) {
-    if (strcmp(currentPath, "/") == 0) return;
-    String p = String(currentPath);
-    if (p.endsWith("/")) p = p.substring(0, p.length() - 1);
-    int last = p.lastIndexOf('/');
-    strncpy(currentPath, (last <= 0 ? "/" : p.substring(0, last + 1)).c_str(), PATH_LEN - 1);
-    return;
-  }
-  // Absolute or relative
-  String target = buildPath(argv[1]);
-  if (!target.endsWith("/")) target += "/";
-  if (isDirectory(target.substring(0, target.length() - 1)) || target == "/") {
-    strncpy(currentPath, target.c_str(), PATH_LEN - 1);
-  } else {
-    Serial.printf(RED "cd: '%s' not found\n" RESET, argv[1]);
-  }
-}
+    int count = 0;
 
-void cmdMkdir(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: mkdir <name>")); return; }
-  String path = buildPath(argv[1]);
-  if (isDirectory(path)) { Serial.println(YELLOW "Already exists" RESET); return; }
-  ensureDir(path);
-  Serial.printf(GREEN "Directory '%s' created\n" RESET, argv[1]);
-  klog(("mkdir " + path).c_str());
-}
-
-void cmdTouch2(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: touch <filename>")); return; }
-  String path = buildPath(argv[1]);
-  if (!SPIFFS.exists(path)) {
-    File f = SPIFFS.open(path, FILE_WRITE);
-    if (!f) { Serial.println(RED "Failed to create file" RESET); return; }
-    f.close();
-  }
-  Serial.printf("'%s' OK\n", argv[1]);
-}
-
-void cmdCat(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: cat <filename>")); return; }
-  String path = buildPath(argv[1]);
-  File f = SPIFFS.open(path, FILE_READ);
-  if (!f) { Serial.printf(RED "File not found: %s\n" RESET, argv[1]); return; }
-  if (f.size() == 0) { Serial.println(GRAY "(empty)" RESET); f.close(); return; }
-  while (f.available()) {
-    char c = f.read();
-    Serial.write(c);
-  }
-  Serial.println();
-  f.close();
-}
-
-void cmdWrite(char** argv, uint8_t argc) {
-  // writefile <name> <content...>  or  append <name> <content>
-  bool appendMode = (argc >= 1 && strcasecmp(argv[0], "append") == 0);
-  if (argc < 3) {
-    Serial.println(F("Usage: writefile <filename> <content>"));
-    Serial.println(F("       append    <filename> <content>"));
-    return;
-  }
-  String path = buildPath(argv[1]);
-  File f = SPIFFS.open(path, appendMode ? FILE_APPEND : FILE_WRITE);
-  if (!f) { Serial.println(RED "Cannot open file" RESET); return; }
-  for (uint8_t i = 2; i < argc; i++) {
-    f.print(argv[i]);
-    if (i < argc - 1) f.print(' ');
-  }
-  f.println();
-  f.close();
-  Serial.printf("Written to '%s'\n", argv[1]);
-}
-
-void cmdRM(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: rm <name> [-r]")); return; }
-  String path = buildPath(argv[1]);
-  bool recursive = (argc >= 3 && strcmp(argv[2], "-r") == 0);
-
-  if (isDirectory(path)) {
-    if (!recursive) { Serial.println(YELLOW "Use 'rm <dir> -r' to remove directory" RESET); return; }
-    // Remove all files under this path
-    String prefix = path; if (!prefix.endsWith("/")) prefix += "/";
     File root = SPIFFS.open("/");
-    File fi = root.openNextFile();
-    while (fi) {
-      if (String(fi.name()).startsWith(prefix)) SPIFFS.remove(fi.name());
-      fi = root.openNextFile();
+    File f    = root.openNextFile();
+    while (f) {
+      String fp = String(f.name()); // e.g. "/home/file.txt"
+      // Show only direct children of target
+      if (fp.startsWith(target)) {
+        String rest = fp.substring(target.length());
+        // Skip if rest contains another slash (grandchild)
+        if (rest.length() > 0 && rest.indexOf('/') < 0) {
+          bool isDir = rest.endsWith(".dir") || f.isDirectory();
+          if (rest == ".dir") { f = root.openNextFile(); continue; } // skip dir markers
+          printf("  ");
+          if (isDir) {
+            printf(BLUE); printf("%-22s" RESET, (rest + "/").c_str());
+            printf(GRAY "  <DIR>" RESET"\n");
+          } else {
+            printf(WHITE "%-22s" RESET, rest.c_str());
+            printf("%6d bytes\n", (int)f.size());
+          }
+          count++;
+        }
+      }
+      f = root.openNextFile();
     }
-    String marker = path + "/.dir";
-    SPIFFS.remove(marker);
-    Serial.printf(GREEN "Removed directory '%s'\n" RESET, argv[1]);
-  } else if (SPIFFS.exists(path)) {
-    SPIFFS.remove(path);
-    Serial.printf(GREEN "Removed '%s'\n" RESET, argv[1]);
-  } else {
-    Serial.printf(RED "Not found: %s\n" RESET, argv[1]);
+
+    if (count == 0) printf(GRAY "  (empty)" RESET"\n");
+    // Show total SPIFFS usage
+    size_t total = SPIFFS.totalBytes();
+    size_t used  = SPIFFS.usedBytes();
+    printf("\n  " GRAY "%d items  │  SPIFFS: %u / %u KB used" RESET "\n\n",
+                  count, used / 1024, total / 1024);
+    return 0;
   }
-}
+};
+static struct cmdLs_args cmdLsHelp;
 
-void cmdMv(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: mv <src> <dst>")); return; }
-  String src = buildPath(argv[1]);
-  String dst = buildPath(argv[2]);
-  if (!SPIFFS.exists(src)) { Serial.println(RED "Source not found" RESET); return; }
-  // Copy then delete
-  File fs_ = SPIFFS.open(src, FILE_READ);
-  File fd  = SPIFFS.open(dst, FILE_WRITE);
-  if (!fs_ || !fd) { Serial.println(RED "Move failed" RESET); return; }
-  while (fs_.available()) fd.write(fs_.read());
-  fs_.close(); fd.close();
-  SPIFFS.remove(src);
-  Serial.printf("Moved '%s' → '%s'\n", argv[1], argv[2]);
-}
+struct cmdCd_args {
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdCd_args &args) {
+    args.dst = arg_str0(NULL, NULL, "[dst]", "The directory to change to.");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdCd_args &args) {
+    if (!(args.dst->count) || strcmp(args.dst->sval[0], "/") == 0) {
+      strncpy(currentPath, "/", PATH_LEN - 1); return 0;
+    }
+    if (strcmp(args.dst->sval[0], "..") == 0) {
+      if (strcmp(currentPath, "/") == 0) return 0;
+      String p = String(currentPath);
+      if (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+      int last = p.lastIndexOf('/');
+      strncpy(currentPath, (last <= 0 ? "/" : p.substring(0, last + 1)).c_str(), PATH_LEN - 1);
+      return 0;
+    }
+    // Absolute or relative
+    String target = buildPath(args.dst->sval[0]);
+    if (!target.endsWith("/")) target += "/";
+    if (isDirectory(target.substring(0, target.length() - 1)) || target == "/") {
+      strncpy(currentPath, target.c_str(), PATH_LEN - 1);
+    } else {
+      printf(RED "cd: '%s' not found\n" RESET, args.dst->sval[0]);
+    }
+    return 0;
+  }
+};
+static struct cmdCd_args cmdCdHelp;
 
-void cmdCp(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: cp <src> <dst>")); return; }
-  String src = buildPath(argv[1]);
-  String dst = buildPath(argv[2]);
-  if (!SPIFFS.exists(src)) { Serial.println(RED "Source not found" RESET); return; }
-  File fs_ = SPIFFS.open(src, FILE_READ);
-  File fd  = SPIFFS.open(dst, FILE_WRITE);
-  if (!fs_ || !fd) { Serial.println(RED "Copy failed" RESET); return; }
-  size_t bytes = 0;
-  while (fs_.available()) { fd.write(fs_.read()); bytes++; }
-  fs_.close(); fd.close();
-  Serial.printf("Copied %u bytes → '%s'\n", bytes, argv[2]);
-}
+struct cmdMkdir_args {
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdMkdir_args &args) {
+    args.dst = arg_str1(NULL, NULL, "<dst>", "Target directory");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdMkdir_args &args) {
+    String path = buildPath(args.dst->sval[0]);
+    if (isDirectory(path)) { printf(YELLOW "Already exists" RESET"\n"); return -1; }
+    ensureDir(path);
+    printf(GREEN "Directory '%s' created\n" RESET, args.dst->sval[0]);
+    klog(("mkdir " + path).c_str());
+    return 0;
+  }
+};
+static struct cmdMkdir_args cmdMkdirHelp;
+
+struct cmdTouch2_args {
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdTouch2_args &args) {
+    args.dst = arg_str1(NULL, NULL, "<dst>", "Target file");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdTouch2_args &args) {
+    String path = buildPath(args.dst->sval[0]);
+    if (!SPIFFS.exists(path)) {
+      File f = SPIFFS.open(path, FILE_WRITE);
+      if (!f) { printf(RED "Failed to create file" RESET"\n"); return -1; }
+      f.close();
+    }
+    printf("'%s' OK\n", args.dst->sval[0]);
+    return 0;
+  }
+};
+static struct cmdTouch2_args cmdTouch2Help;
+
+struct cmdCat_args {
+  arg_str_t *src;
+  arg_end_t *end;
+  static void setArgs(struct cmdCat_args &args) {
+    args.src = arg_str1(NULL, NULL, "<src>", "Source file");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdCat_args &args) {
+    String path = buildPath(args.src->sval[0]);
+    File f = SPIFFS.open(path, FILE_READ);
+    if (!f) { printf(RED "File not found: %s\n" RESET, args.src->sval[0]); return -1; }
+    if (f.size() == 0) { printf(GRAY "(empty)" RESET"\n"); f.close(); return -1; }
+    while (f.available()) {
+      char c = f.read();
+      printf("%c", c);
+    }
+    printf("\n");
+    f.close();
+    return 0;
+  }
+};
+static struct cmdCat_args cmdCatHelp;
+
+struct cmdWrite_args {
+  arg_lit_t *append;
+  arg_str_t *dst;
+  arg_str_t *content;
+  arg_end_t *end;
+  static void setArgs(struct cmdWrite_args &args) {
+    args.append = arg_lit0("a", "append", "Append to the file instead of overwriting");
+    args.dst = arg_str1(NULL, NULL, "<file>", "The file to write to");
+    args.content = arg_strn(NULL, NULL, "<content> [content...]", 1, MAX_ARGS - 2, "The data to write");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdWrite_args &args) {
+    bool appendMode = (args.append->count > 0);
+    String path = buildPath(args.dst->sval[0]);
+    File f = SPIFFS.open(path, appendMode ? FILE_APPEND : FILE_WRITE);
+    if (!f) { printf(RED "Cannot open file" RESET "\n"); return -1; }
+    for (uint8_t i = 0; i < args.content->count; i++) {
+      f.print(args.content->sval[i]);
+      if (i < args.content->count - 1) f.print(' ');
+    }
+    f.println();
+    f.close();
+    printf("Written to '%s'\n", args.dst->sval[0]);
+    return 0;
+  }
+};
+static struct cmdWrite_args cmdWriteHelp;
+
+struct cmdAppend_args {
+  arg_str_t *dst;
+  arg_str_t *content;
+  arg_end_t *end;
+  static void setArgs(struct cmdAppend_args &args) {
+    args.dst = arg_str1(NULL, NULL, "<file>", "The file to write to");
+    args.content = arg_strn(NULL, NULL, "<content> [content...]", 1, MAX_ARGS - 2, "The data to write");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdAppend_args &args) {
+    String cmd = "writefile -a ";
+    cmd += args.dst->sval[0];
+    for(int i = 0; i < args.content->count; i++) {
+      cmd += " ";
+      cmd += args.content->sval[i];
+    }
+    Console.run(cmd.c_str());
+    return 0;
+  }
+};
+static struct cmdAppend_args cmdAppendHelp;
+
+struct cmdRm_args {
+  arg_lit_t *recursive;
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdRm_args &args) {
+    args.recursive = arg_lit0("r", "recursive", "Remove a directory recursively");
+    args.dst = arg_str1(NULL, NULL, "<path>", "The file or directory to remove");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdRm_args &args) {
+    String path = buildPath(args.dst->sval[0]);
+    bool recursive = (args.recursive->count > 0);
+    if (isDirectory(path)) {
+      if (!recursive) { printf(YELLOW "Use 'rm <dir> -r' to remove directory" RESET"\n"); return -1; }
+      // Remove all files under this path
+      String prefix = path; if (!prefix.endsWith("/")) prefix += "/";
+      File root = SPIFFS.open("/");
+      File fi = root.openNextFile();
+      while (fi) {
+        if (String(fi.name()).startsWith(prefix)) SPIFFS.remove(fi.name());
+        fi = root.openNextFile();
+      }
+      String marker = path + "/.dir";
+      SPIFFS.remove(marker);
+      printf(GREEN "Removed directory '%s'\n" RESET, args.dst->sval[0]);
+    } else if (SPIFFS.exists(path)) {
+      SPIFFS.remove(path);
+      printf(GREEN "Removed '%s'\n" RESET, args.dst->sval[0]);
+    } else {
+      printf(RED "Not found: %s\n" RESET, args.dst->sval[0]);
+      return -1;
+    }
+    return 0;
+  }
+};
+static struct cmdRm_args cmdRmHelp;
+
+struct cmdMv_args {
+  arg_str_t *src;
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdMv_args &args) {
+    args.src = arg_str1(NULL, NULL, "<src>", "Source file");
+    args.dst = arg_str1(NULL, NULL, "<dst>", "Destination file");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdMv_args &args) {
+    String src = buildPath(args.src->sval[0]);
+    String dst = buildPath(args.dst->sval[0]);
+    if (!SPIFFS.exists(src)) { printf(RED "Source not found" RESET"\n"); return -1; }
+    // Copy then delete
+    File fs_ = SPIFFS.open(src, FILE_READ);
+    File fd  = SPIFFS.open(dst, FILE_WRITE);
+    if (!fs_ || !fd) { printf(RED "Move failed" RESET"\n"); return -1; }
+    while (fs_.available()) fd.write(fs_.read());
+    fs_.close(); fd.close();
+    SPIFFS.remove(src);
+    printf("Moved '%s' → '%s'\n", args.src->sval[0], args.dst->sval[0]);
+    return 0;
+  }
+};
+static struct cmdMv_args cmdMvHelp;
+
+struct cmdCp_args {
+  arg_str_t *src;
+  arg_str_t *dst;
+  arg_end_t *end;
+  static void setArgs(struct cmdCp_args &args) {
+    args.src = arg_str1(NULL, NULL, "<src>", "Source file");
+    args.dst = arg_str1(NULL, NULL, "<dst>", "Destination file");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdCp_args &args) {
+    String src = buildPath(args.src->sval[0]);
+    String dst = buildPath(args.dst->sval[0]);
+    if (!SPIFFS.exists(src)) { printf(RED "Source not found" RESET"\n"); return -1; }
+    File fs_ = SPIFFS.open(src, FILE_READ);
+    File fd  = SPIFFS.open(dst, FILE_WRITE);
+    if (!fs_ || !fd) { printf(RED "Copy failed" RESET"\n"); return -1; }
+    size_t bytes = 0;
+    while (fs_.available()) { fd.write(fs_.read()); bytes++; }
+    fs_.close(); fd.close();
+    printf("Copied %u bytes → '%s'\n", bytes, args.dst->sval[0]);
+    return 0;
+  }
+};
+static struct cmdCp_args cmdCpHelp;
 
 struct cmdDf_args {
   arg_end_t *end;
@@ -982,17 +1093,17 @@ struct cmdDf_args {
     args.end = arg_end(2);
   }
   static int implementation(int argc, char** argv, struct cmdDf_args &args) {
-  size_t total = SPIFFS.totalBytes();
-  size_t used  = SPIFFS.usedBytes();
-  size_t free_ = total - used;
-  int pct = (used * 100) / total;
-  int bar = (used * 30) / total;
-  printf("\n  " YELLOW "Filesystem (SPIFFS):" RESET"\n");
-  printf  ("  [");
-  for (int i = 0; i < 30; i++) printf(i < bar ? GREEN "█" RESET : GRAY "░" RESET);
-  printf ("] %d%%\n", pct);
-  printf ("  Total: %u KB  Used: %u KB  Free: %u KB\n\n",
-                 total/1024, used/1024, free_/1024);
+    size_t total = SPIFFS.totalBytes();
+    size_t used  = SPIFFS.usedBytes();
+    size_t free_ = total - used;
+    int pct = (used * 100) / total;
+    int bar = (used * 30) / total;
+    printf("\n  " YELLOW "Filesystem (SPIFFS):" RESET"\n");
+    printf  ("  [");
+    for (int i = 0; i < 30; i++) printf(i < bar ? GREEN "█" RESET : GRAY "░" RESET);
+    printf ("] %d%%\n", pct);
+    printf ("  Total: %u KB  Used: %u KB  Free: %u KB\n\n",
+                  total/1024, used/1024, free_/1024);
     return 0;
   }
 };
@@ -1463,10 +1574,21 @@ struct cmdPwd_args {
   }
 };
 static struct cmdPwd_args cmdPwdHelp;
-void cmdEcho(char** argv, uint8_t argc) {
-  for (int i = 1; i < argc; i++) { if (i > 1) Serial.print(' '); Serial.print(argv[i]); }
-  Serial.println();
-}
+
+struct cmdEcho_args {
+  arg_str_t *content;
+  arg_end_t *end;
+  static void setArgs(struct cmdEcho_args &args) {
+    args.content = arg_strn(NULL, NULL, "content", 1, MAX_ARGS, "The values to print");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdEcho_args &args) {
+    for (int i = 0; i < (args.content->count); i++) { if (i > 0) printf(" "); printf(args.content->sval[i]); }
+    printf("\n");
+    return 0;
+  }
+};
+static struct cmdEcho_args cmdEchoHelp;
 
 struct cmdClear_args {
   arg_end_t *end;
@@ -1574,6 +1696,8 @@ void setup() {
 
   // Todo: dynamic hostname, path, wifi
   Console.setPrompt(BGREEN "root@" HOSTNAME RESET ":" BLUE "" RESET "" WHITE "$ " RESET);
+  // We can't do filesystem operations if we use PSRAM
+  Console.usePsram(false);
   Console.begin();
   Console.setMaxHistory(16);
   // Hardware
@@ -1597,23 +1721,19 @@ void setup() {
   Command<struct cmdPins_args>::addCmd({"pins"}, "Show current pin configuration", cmdPinsHelp);
 
   // Filesystem
-  //Console.addCmd("ls", "", cmdLS);
-  //Console.addCmd("dir", "", cmdLS);
-  //Console.addCmd("cd", "", cmdCD);
-  //Console.addCmd("pwd", "", cmdPwd);
-  //Console.addCmd("mkdir", "", cmdMkdir);
-  //Console.addCmd("touch", "", cmdTouch2);
-  //Console.addCmd("cat", "", cmdCat);
-  //Console.addCmd("type", "", cmdCat);
-  //Console.addCmd("writefile", "", cmdWrite);
-  //Console.addCmd("write>", "", cmdWrite);
-  //Console.addCmd("append", "", cmdWrite);
-  //Console.addCmd("rm", "", cmdRM);
-  //Console.addCmd("del", "", cmdRM);
-  //Console.addCmd("mv", "", cmdMv);
-  //Console.addCmd("cp", "", cmdCp);
+  Command<struct cmdLs_args>::addCmd({"ls", "dir"}, "List files in a path", cmdLsHelp);
+  Command<struct cmdCd_args>::addCmd({"cd"}, "Change working directory", cmdCdHelp);
+  Command<struct cmdPwd_args>::addCmd({"pwd"}, "Print working directory", cmdPwdHelp);
+  Command<struct cmdMkdir_args>::addCmd({"mkdir"}, "Create a directory", cmdMkdirHelp);
+  Command<struct cmdTouch2_args>::addCmd({"touch"}, "Create empty file", cmdTouch2Help);
+  Command<struct cmdCat_args>::addCmd({"cat", "type"}, "Print the contents of a file", cmdCatHelp);
+  Command<struct cmdWrite_args>::addCmd({"writefile", "write>"}, "Write or append values to a file", cmdWriteHelp);
+  Command<struct cmdAppend_args>::addCmd({"append"}, "Append values to a file", cmdAppendHelp);
+  Command<struct cmdRm_args>::addCmd({"rm", "del"}, "Delete a file or folder", cmdRmHelp);
+  Command<struct cmdMv_args>::addCmd({"mv"}, "Move or rename a file", cmdMvHelp);
+  Command<struct cmdCp_args>::addCmd({"cp"}, "Copy a file", cmdCpHelp);
   Command<struct cmdDf_args>::addCmd({"df"}, "Show how full the disk is", cmdDfHelp);
-  //Console.addCmd("echo", "", cmdEcho);
+  Command<struct cmdEcho_args>::addCmd({"echo"}, "Write values to standard output", cmdEchoHelp);
 
   // WiFi
   //Console.addCmd("wifi", "", cmdWifi);
