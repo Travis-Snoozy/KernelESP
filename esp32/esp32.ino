@@ -133,15 +133,6 @@ int safeAtoi(const char* s) {
   return (int)strtol(s, nullptr, 0); // handles 0x hex too
 }
 
-float safeAtof(const char* s) {
-  if (!s || !*s) return 0.0f;
-  return strtof(s, nullptr);
-}
-
-void strlowerBuf(char* s) {
-  for (; *s; s++) if (*s >= 'A' && *s <= 'Z') *s += 32;
-}
-
 // Trim leading whitespace in-place, returns pointer into s
 char* ltrim(char* s) {
   while (*s == ' ' || *s == '\t') s++;
@@ -322,42 +313,42 @@ void initFilesystem() {
 
 // ASCII Logo
 void showLogo() {
-  Serial.print(F("\033[2J\033[H")); // clear screen, home
-  Serial.println(F(CYAN
-    "  ██╗  ██╗███████╗██████╗ ███╗   ██╗███████╗██╗     ███████╗███████╗██████╗ "  RESET));
-  Serial.println(F(CYAN
-    "  ██║ ██╔╝██╔════╝██╔══██╗████╗  ██║██╔════╝██║     ██╔════╝██╔════╝██╔══██╗" RESET));
-  Serial.println(F(BCYAN
-    "  █████╔╝ █████╗  ██████╔╝██╔██╗ ██║█████╗  ██║     █████╗  ███████╗██████╔╝" RESET));
-  Serial.println(F(CYAN
-    "  ██╔═██╗ ██╔══╝  ██╔══██╗██║╚██╗██║██╔══╝  ██║     ██╔══╝  ╚════██║██╔═══╝ " RESET));
-  Serial.println(F(CYAN
-    "  ██║  ██╗███████╗██║  ██║██║ ╚████║███████╗███████╗███████╗███████║██║      " RESET));
-  Serial.println(F(GRAY
-    "  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚══════╝╚══════╝╚═╝  v1.0" RESET));
-  Serial.println();
+  printf("\033[2J\033[H"); // clear screen, home
+  printf(CYAN
+    "  ██╗  ██╗███████╗██████╗ ███╗   ██╗███████╗██╗     ███████╗███████╗██████╗ "  RESET "\n");
+  printf(CYAN
+    "  ██║ ██╔╝██╔════╝██╔══██╗████╗  ██║██╔════╝██║     ██╔════╝██╔════╝██╔══██╗" RESET "\n");
+  printf(BCYAN
+    "  █████╔╝ █████╗  ██████╔╝██╔██╗ ██║█████╗  ██║     █████╗  ███████╗██████╔╝" RESET "\n");
+  printf(CYAN
+    "  ██╔═██╗ ██╔══╝  ██╔══██╗██║╚██╗██║██╔══╝  ██║     ██╔══╝  ╚════██║██╔═══╝ " RESET "\n");
+  printf(CYAN
+    "  ██║  ██╗███████╗██║  ██║██║ ╚████║███████╗███████╗███████╗███████║██║      " RESET "\n");
+  printf(GRAY
+    "  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚══════╝╚══════╝╚═╝  v1.0" RESET "\n");
+  printf("\n");
 
   // System info bar
   uint32_t heap = ESP.getFreeHeap();
   uint32_t flash = ESP.getFlashChipSize() / 1024;
-  Serial.printf(GRAY "  Board: " WHITE ARDUINO_BOARD" @ %dMHz  " GRAY
+  printf(GRAY "  Board: " WHITE ARDUINO_BOARD" @ %dMHz  " GRAY
                 "RAM: " WHITE "%u KB free  " GRAY
                 "Flash: " WHITE "%u KB" RESET "\n",
                 ESP.getCpuFreqMHz(), heap / 1024, flash);
 
   // WiFi status
   if (wifiConnected) {
-    Serial.printf(GRAY "  WiFi: " GREEN "Connected  " GRAY "IP: " WHITE "%s" RESET "\n",
+    printf(GRAY "  WiFi: " GREEN "Connected  " GRAY "IP: " WHITE "%s" RESET "\n",
                   WiFi.localIP().toString().c_str());
   } else if (apActive) {
-    Serial.printf(GRAY "  WiFi: " YELLOW "AP Mode  " GRAY "IP: " WHITE "%s" RESET "\n",
+    printf(GRAY "  WiFi: " YELLOW "AP Mode  " GRAY "IP: " WHITE "%s" RESET "\n",
                   WiFi.softAPIP().toString().c_str());
   } else {
-    Serial.println(GRAY "  WiFi: " RED "Offline" RESET);
+    printf(GRAY "  WiFi: " RED "Offline" RESET "\n");
   }
 
-  Serial.println(GRAY "  ─────────────────────────────────────────────────────────────────────────" RESET);
-  Serial.println(GRAY "  Type " YELLOW "'help'" GRAY " for commands.  " YELLOW "'wifi help'" GRAY " for network commands." RESET "\n");
+  printf(GRAY "  ─────────────────────────────────────────────────────────────────────────" RESET "\n");
+  printf(GRAY "  Type " YELLOW "'help'" GRAY " for commands.  " YELLOW "'wifi help'" GRAY " for network commands." RESET "\n\n");
 }
 
 // Hardware Commands
@@ -428,10 +419,6 @@ struct cmdPinMode_args {
   }
 };
 static struct cmdPinMode_args cmdPinModeHelp;
-void cmdPinMode(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: pinmode <pin> <input|output|pullup|pulldown|analog|touch|ledpwm|dac>")); return; }
-
-}
 
 struct cmdDigitalWrite_args {
   arg_str_t *pin;
@@ -641,7 +628,7 @@ struct cmdNoTone_args {
     int pin = (args.pin->count > 0) ? resolvePin(args.pin->sval[0], PC_LEDPWM) : -1;
     ledcWrite(pin, 0);
     if (pin >= 0) ledcDetach(pin);
-    Serial.println("Tone stopped");
+    printf("Tone stopped\n");
     return 0;
   }
 };
@@ -1242,12 +1229,12 @@ struct cmdWifiConnect_args {
     args.end = arg_end(2);
   }
   static int implementation(int argc, char** argv, struct cmdWifiConnect_args &args) {
-    Serial.printf("  Connecting to '%s'", args.ssid->sval[0]);
+    printf("  Connecting to '%s'", args.ssid->sval[0]);
     WiFi.mode(WIFI_STA);
     WiFi.begin(args.ssid->sval[0], args.pass->sval[0]);
     int retries = 0;
     while (WiFi.status() != WL_CONNECTED && retries < 30) {
-      delay(500); Serial.print('.'); retries++;
+      delay(500); printf("."); retries++;
     }
     if (WiFi.status() == WL_CONNECTED) {
       wifiConnected = true;
@@ -1310,7 +1297,7 @@ struct cmdWifiScan_args {
   static int implementation(int argc, char** argv, struct cmdWifiScan_args &args) {
     printf("  Scanning...\n");
     int n = WiFi.scanNetworks();
-    if (n == 0) { Serial.printf("  No networks found\n"); return 0; }
+    if (n == 0) { printf("  No networks found\n"); return 0; }
     printf("\n  " YELLOW "#  SSID                           RSSI  ENC" RESET"\n");
     printf("  " GRAY "───────────────────────────────────────────────" RESET"\n");
     for (int i = 0; i < n; i++) {
@@ -1469,9 +1456,9 @@ struct cmdEval_args {
     String code = "";
 
     for (int i = 1; i < argc; i++) { if (i > 1) code += " "; code += argv[i]; }
-    Serial.println(F(CYAN ">>> eval" RESET));
+    printf(CYAN ">>> eval" RESET "\n");
     runScript(code.c_str());
-    Serial.println(F(CYAN ">>> done" RESET));
+    printf(CYAN ">>> done" RESET "\n");
 
     return 0;
   }
@@ -1508,11 +1495,11 @@ struct cmdFor_args {
 
     for (int i = 2; i < argc; i++) { if (i > 2) cmd += " "; cmd += argv[i]; }
     for (int i = 0; i < count; i++) {
-      Serial.printf(GRAY "\r  [%d/%d]" RESET, i + 1, count);
+      printf(GRAY "\r  [%d/%d]" RESET, i + 1, count);
       Console.run(cmd);
       delay(5);
     }
-    Serial.println();
+    printf("\n");
 
     return 0;
   }
@@ -1535,11 +1522,11 @@ struct cmdFree_args {
     uint32_t heap    = ESP.getFreeHeap();
     uint32_t minHeap = ESP.getMinFreeHeap();
     uint32_t maxAlloc= ESP.getMaxAllocHeap();
-    Serial.println(F("\n  " YELLOW "Memory:" RESET));
-    Serial.printf("  Free heap      : %u bytes (%u KB)\n", heap, heap / 1024);
-    Serial.printf("  Min free heap  : %u bytes\n", minHeap);
-    Serial.printf("  Max alloc block: %u bytes\n", maxAlloc);
-    Serial.printf("  PSRAM          : %u bytes\n", ESP.getFreePsram());
+    printf("\n  " YELLOW "Memory:" RESET "\n");
+    printf("  Free heap      : %u bytes (%u KB)\n", heap, heap / 1024);
+    printf("  Min free heap  : %u bytes\n", minHeap);
+    printf("  Max alloc block: %u bytes\n", maxAlloc);
+    printf("  PSRAM          : %u bytes\n", ESP.getFreePsram());
     Console.run("df");
     return 0;
   }
@@ -1711,58 +1698,6 @@ struct cmdWave_args {
 };
 static struct cmdWave_args cmdWaveHelp;
 
-void cmdHelp(char** argv, uint8_t argc) {
-  Serial.println(F("\n  " CYAN "KernelESP v1.0 Command Reference" RESET "\n"));
-
-  Serial.println(F("  " GREEN "Hardware:" RESET));
-  Serial.println(F("    pins                          Show current pin configuration"));
-  Serial.println(F("    pinmode <pin> <mode>          Set pin mode"));
-  Serial.println(F("                                  (input/output/pullup/pulldown/"));
-  Serial.println(F("                                  analog/touch/ledpwm/dac)"));
-  Serial.println(F("    write   <pin> <HIGH|LOW>      Digital write"));
-  Serial.println(F("    read    [pin]                 Digital read (all if no pin)"));
-  Serial.println(F("    aread   [pin]                 ADC read (0-4095, 3.3V)"));
-  Serial.println(F("    pwm     <pin> <0-255> [freq]  LEDC PWM output"));
-  #ifdef SOC_DAC_SUPPORTED
-  Serial.println(F("    dac     <25|26> <0-255>       DAC voltage output"));
-  #endif
-  Serial.println(F("    gpio    <pin> <on|off|toggle> Quick GPIO"));
-  Serial.println(F("    tone    <pin> <hz> [ms]       Square wave tone"));
-  Serial.println(F("    notone  [pin]                 Stop tone"));
-  Serial.println(F("    tsense  [pin]                 Capacitive touch read"));
-  Serial.println(F("    disco   [cycles] [speed]      LED show"));
-  Serial.println(F("    morse   <pin> <MSG>            Morse code"));
-
-  Serial.println(F("\n  " GREEN "Sensors:" RESET));
-  Serial.println(F("    sensor                        All ADC channels with bar"));
-  Serial.println(F("    scope   <pin> [n] [ms]        Oscilloscope plot"));
-  Serial.println(F("    monitor <pin> <ms> [s]        Live pin monitor"));
-
-  Serial.println(F("\n  " GREEN "Filesystem (SPIFFS — persistent):" RESET));
-  Serial.println(F("    ls [dir]   cd <dir>   pwd   mkdir <name>   touch <name>"));
-  Serial.println(F("    cat <f>    writefile <f> <text>   append <f> <text>"));
-  Serial.println(F("    rm <name> [-r]   mv <src> <dst>   cp <src> <dst>   df"));
-
-  Serial.println(F("\n  " GREEN "WiFi:" RESET));
-  Serial.println(F("    wifi                          Status"));
-  Serial.println(F("    wifi scan                     Scan networks"));
-  Serial.println(F("    wifi connect <SSID> <PASS>    Connect"));
-  Serial.println(F("    wifi ap <SSID> [PASS]         Soft Access Point"));
-  Serial.println(F("    wifi ping <IP>                Connectivity check"));
-  Serial.println(F("    wifi http start [port]        Web server"));
-  Serial.println(F("    wifi mac / hostname           Info / rename"));
-
-  Serial.println(F("\n  " GREEN "Scripting:" RESET));
-  Serial.println(F("    eval \"cmd1; cmd2\"             Execute inline script"));
-  Serial.println(F("    run  <script.sh>              Execute file script"));
-  Serial.println(F("    for  <n> \"cmd\"                Loop n times"));
-  Serial.println(F("    delay <ms>                    Wait"));
-
-  Serial.println(F("\n  " GREEN "System:" RESET));
-  Serial.println(F("    sysinfo / neofetch   uptime   free   df   dmesg"));
-  Serial.println(F("    whoami   uname   echo <text>   clear   wave   reboot\n"));
-}
-
 // Setup
 void setup() {
   Serial.begin(115200);
@@ -1798,7 +1733,7 @@ void setup() {
   Command<struct cmdAnalogRead_args>::addCmd({"aread", "analogread"}, "ADC read (0-4095, 3.3V)", cmdAnalogReadHelp);
   Command<struct cmdPWM_args>::addCmd({"pwm"}, "LEDC PWM output", cmdPWMHelp);
   #ifdef SOC_DAC_SUPPORTED
-  //Console.addCmd("dac", "", cmdDAC);
+  //Console.addCmd("dac", "DAC voltage output", cmdDAC);
   #endif
   Command<struct cmdGPIO_args>::addCmd({"gpio"}, "Quick GPIO", cmdGPIOHelp);
   Command<struct cmdTone_args>::addCmd({"tone"}, "Square wave tone", cmdToneHelp);
@@ -1827,7 +1762,6 @@ void setup() {
   Command<struct cmdEcho_args>::addCmd({"echo"}, "Write values to standard output", cmdEchoHelp);
 
   // WiFi
-  //Console.addCmd("wifi", "", cmdWifi);
   Command<struct cmdWifi_args>::addCmd({"wifi"}, "Show wifi status", cmdWifiHelp);
   Command<struct cmdWifiConnect_args>::addCmd({"wifi-connect", "wifi-up"}, "Connect to AP", cmdWifiConnectHelp);
   Command<struct cmdWifiDisconnect_args>::addCmd({"wifi-disconnect", "wifi-down"}, "Disconnect from AP", cmdWifiDisconnectHelp);
@@ -1841,10 +1775,10 @@ void setup() {
 
   // Scripting
   Command<struct cmdEval_args>::addCmd({"eval", "exec"}, "Run commands as though read from a script", cmdEvalHelp);
-//  Console.addCmd("run", "", cmdRun);
+//  Console.addCmd("run", "Execute file script", cmdRun);
 //  Console.addCmd("sh", "", cmdRun);
   Command<struct cmdFor_args>::addCmd({"for", "loop"}, "Run a command multiple times", cmdForHelp);
-//  Console.addCmd("delay", "", cmdDelay);
+//  Console.addCmd("delay", "Wait", cmdDelay);
 //  Console.addCmd("sleep", "", cmdDelay);
 
   // System
