@@ -564,54 +564,88 @@ void cmdDAC(char** argv, uint8_t argc) {
 }
 #endif
 
-void cmdTouch(char** argv, uint8_t argc) {
-  if (argc < 2) {
-    Serial.println(F("\n  " YELLOW "Touch Sensor Readings:" RESET "\n"));
-    for (int i = 0; i < BOARD_TOUCH_COUNT; i++) {
-      // Only read out pins configured for touch input
-      if (pinAssignment[boardTouchPins[i]] != PC_TOUCH) { continue; }
-      uint16_t val = touchRead(boardTouchPins[i]);
-      int bar = map(constrain(val, 0, 80), 0, 80, 30, 0);
-      bool touched = val < 30;
-      Serial.printf("  T%-2d/GPIO%-2d [", i, boardTouchPins[i]);
-      for (int b = 0; b < 30; b++)
-        Serial.print(b < bar ? (touched ? RED "█" RESET : CYAN "█" RESET) : GRAY "░" RESET);
-      Serial.printf("] %3d  %s\n", val, touched ? RED "<TOUCH>" RESET : "");
+struct cmdTouch_args {
+  arg_str_t *pin;
+  arg_end_t *end;
+  static void setArgs(struct cmdTouch_args &args) {
+    args.pin = arg_str0(NULL, NULL, "<pin>", "The pin to check status on.");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdTouch_args &args) {
+    if (args.pin->count <= 0) {
+      printf("\n  " YELLOW "Touch Sensor Readings:" RESET "\n\n");
+      for (int i = 0; i < BOARD_TOUCH_COUNT; i++) {
+        // Only read out pins configured for touch input
+        if (pinAssignment[boardTouchPins[i]] != PC_TOUCH) { continue; }
+        uint16_t val = touchRead(boardTouchPins[i]);
+        int bar = map(constrain(val, 0, 80), 0, 80, 30, 0);
+        bool touched = val < 30;
+        printf("  T%-2d/GPIO%-2d [", i, boardTouchPins[i]);
+        for (int b = 0; b < 30; b++)
+          printf(b < bar ? (touched ? RED "█" RESET : CYAN "█" RESET) : GRAY "░" RESET);
+        printf("] %3d  %s\n", val, touched ? RED "<TOUCH>" RESET : "");
+      }
+      printf("\n");
+    } else {
+      int pin = resolvePin(args.pin->sval[0], PC_TOUCH);
+      if (pin < 0) { printf(RED "Invalid pin" RESET "\n"); return -1; }
+      uint16_t val = touchRead(pin);
+      printf("Touch GPIO%d = %d (%s)\n", pin, val, val < 30 ? RED "TOUCHED" RESET : "not touched");
     }
-    Serial.println();
-    return;
+    return 0;
   }
-  int pin = resolvePin(argv[1], PC_TOUCH);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  uint16_t val = touchRead(pin);
-  Serial.printf("Touch GPIO%d = %d (%s)\n", pin, val, val < 30 ? RED "TOUCHED" RESET : "not touched");
-}
+};
+static struct cmdTouch_args cmdTouchHelp;
 
-void cmdTone(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: tone <pin> <freq_hz> [duration_ms]")); return; }
-  int pin  = resolvePin(argv[1], PC_LEDPWM);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int freq = safeAtoi(argv[2]);
-  if (freq < 1 || freq > 20000) { Serial.println(RED "Frequency: 1-20000 Hz" RESET); return; }
-  ledcAttachChannel(pin, freq, 8, 14);
-  ledcWrite(pin, 127); // 50% duty = square wave
-  if (argc >= 4) {
-    int ms = safeAtoi(argv[3]);
-    Serial.printf("Tone GPIO%d: %dHz for %dms\n", pin, freq, ms);
-    delay(ms);
+
+struct cmdTone_args {
+  arg_str_t *pin;
+  arg_int_t *freq;
+  arg_int_t *duration;
+  arg_end_t *end;
+  static void setArgs(struct cmdTone_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "Output pin");
+    args.freq = arg_int1(NULL, NULL, "<freq_hz>", "Tone frequency in Hz");
+    args.duration = arg_int0(NULL, NULL, "duration_ms", "Duration in milliseconds");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdTone_args &args) {
+    int pin  = resolvePin(args.pin->sval[0], PC_LEDPWM);
+    if (pin < 0) { printf(RED "Invalid pin" RESET"\n"); return -1; }
+    int freq = args.freq->ival[0];
+    if (freq < 1 || freq > 20000) { printf(RED "Frequency: 1-20000 Hz" RESET"\n"); return -1; }
+    ledcAttachChannel(pin, freq, 8, 14);
+    ledcWrite(pin, 127); // 50% duty = square wave
+    if (args.duration->count > 0) {
+      int ms = args.duration->ival[0];
+      printf("Tone GPIO%d: %dHz for %dms\n", pin, freq, ms);
+      delay(ms);
+      ledcWrite(pin, 0);
+      ledcDetach(pin);
+    } else {
+      printf("Tone GPIO%d: %dHz continuous. Use 'notone %s' to stop.\n", pin, freq, argv[1]);
+    }
+    return 0;
+  }
+};
+static struct cmdTone_args cmdToneHelp;
+
+struct cmdNoTone_args {
+  arg_str_t *pin;
+  arg_end_t *end;
+  static void setArgs(struct cmdNoTone_args &args) {
+    args.pin = arg_str0(NULL, NULL, "<pin>", "The pin to disable tones on");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdNoTone_args &args) {
+    int pin = (args.pin->count > 0) ? resolvePin(args.pin->sval[0], PC_LEDPWM) : -1;
     ledcWrite(pin, 0);
-    ledcDetach(pin);
-  } else {
-    Serial.printf("Tone GPIO%d: %dHz continuous. Use 'notone %s' to stop.\n", pin, freq, argv[1]);
+    if (pin >= 0) ledcDetach(pin);
+    Serial.println("Tone stopped");
+    return 0;
   }
-}
-
-void cmdNoTone(char** argv, uint8_t argc) {
-  int pin = (argc >= 2) ? resolvePin(argv[1], PC_LEDPWM) : -1;
-  ledcWrite(pin, 0);
-  if (pin >= 0) ledcDetach(pin);
-  Serial.println("Tone stopped");
-}
+};
+static struct cmdNoTone_args cmdNoToneHelp;
 
 struct cmdGPIO_args {
   arg_str_t *pin;
@@ -642,129 +676,186 @@ struct cmdGPIO_args {
 };
 static struct cmdGPIO_args cmdGPIOHelp;
 
-void cmdDisco(char** argv, uint8_t argc) {
-  int cycles = (argc >= 2) ? constrain(safeAtoi(argv[1]), 1, 30)  : 3;
-  int speed  = (argc >= 3) ? constrain(safeAtoi(argv[2]), 5, 500) : 40;
-  const int nPins  = BOARD_DISCO_COUNT;
-  for (int p : boardDiscoPins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
-  Serial.printf(MAGENTA "  *** DISCO MODE *** " RESET "cycles=%d speed=%dms\n", cycles, speed);
-  for (int c = 0; c < cycles; c++) {
-    for (int i = 0; i < nPins; i++) { digitalWrite(boardDiscoPins[i], HIGH); delay(speed); digitalWrite(boardDiscoPins[i], LOW); }
-    for (int i = nPins - 2; i > 0; i--) { digitalWrite(boardDiscoPins[i], HIGH); delay(speed); digitalWrite(boardDiscoPins[i], LOW); }
-    for (int i = 0; i < nPins; i++) { digitalWrite(boardDiscoPins[i], (c + i) % 2); }
-    delay(speed * 4);
-    for (int p : boardDiscoPins) digitalWrite(p, LOW);
-    Serial.printf("\r  Cycle %d/%d", c + 1, cycles);
+struct cmdDisco_args {
+  arg_int_t *cycles;
+  arg_int_t *speed;
+  arg_end_t *end;
+  static void setArgs(struct cmdDisco_args &args) {
+    args.cycles = arg_int0(NULL, NULL, "<cycles>", "The number of disco cycles to perform");
+    args.speed = arg_int0(NULL, NULL, "<speed>", "Delay in ms between pattern changes");
+    args.end = arg_end(2);
   }
-  for (int p : boardDiscoPins) pinMode(p, INPUT);
-  Serial.println(F("\n  " GREEN "Disco complete!" RESET));
-}
-
-void cmdMorse(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: morse <pin> <MESSAGE>")); return; }
-  int pin = resolvePin(argv[1], PC_DOUT);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  pinMode(pin, OUTPUT); digitalWrite(pin, LOW);
-  const char* mt[] = {".-","-...","-.-.","-..",".","..-.","--.","....","..",".---","-.-",".-..","--","-.","---",".--.","--.-",".-.","...","-","..-","...-",".--","-..-","-.--","--.."};
-  Serial.printf("Morse GPIO%d: ", pin);
-  for (int a = 2; a < argc; a++) {
-    for (char* c = argv[a]; *c; c++) {
-      char ch = toupper(*c);
-      if (ch >= 'A' && ch <= 'Z') {
-        Serial.print(ch);
-        const char* code = mt[ch - 'A'];
-        for (const char* m = code; *m; m++) {
-          digitalWrite(pin, HIGH); Serial.print(*m == '.' ? '.' : '-');
-          delay(*m == '.' ? 100 : 300);
-          digitalWrite(pin, LOW); delay(100);
-        }
-        delay(300);
-      } else if (ch == ' ') { Serial.print(' '); delay(700); }
+  static int implementation(int argc, char** argv, struct cmdDisco_args &args) {
+    int cycles = (args.cycles->count > 0) ? constrain(args.cycles->ival[0], 1, 30)  : 3;
+    int speed  = (args.speed->count > 0) ? constrain(args.speed->ival[0], 5, 500) : 40;
+    const int nPins  = BOARD_DISCO_COUNT;
+    for (int p : boardDiscoPins) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
+    printf(MAGENTA "  *** DISCO MODE *** " RESET "cycles=%d speed=%dms\n", cycles, speed);
+    for (int c = 0; c < cycles; c++) {
+      for (int i = 0; i < nPins; i++) { digitalWrite(boardDiscoPins[i], HIGH); delay(speed); digitalWrite(boardDiscoPins[i], LOW); }
+      for (int i = nPins - 2; i > 0; i--) { digitalWrite(boardDiscoPins[i], HIGH); delay(speed); digitalWrite(boardDiscoPins[i], LOW); }
+      for (int i = 0; i < nPins; i++) { digitalWrite(boardDiscoPins[i], (c + i) % 2); }
+      delay(speed * 4);
+      for (int p : boardDiscoPins) digitalWrite(p, LOW);
+      printf("\r  Cycle %d/%d", c + 1, cycles);
     }
-    Serial.print(' ');
+    for (int p : boardDiscoPins) pinMode(p, INPUT);
+    printf("\n  " GREEN "Disco complete!" RESET"\n");
+    return 0;
   }
-  Serial.println("Done");
-}
+};
+static struct cmdDisco_args cmdDiscoHelp;
 
-void cmdSensor(char** argv, uint8_t argc) {
-  Serial.println(F("\n  " YELLOW "Sensor Monitor (ADC — 3.3V ref, 12-bit)" RESET "\n"));
-  for (int i = 0; i < BOARD_ADC_COUNT; i++) {
-    // Only read out pins configured for analog input
-    if (pinAssignment[boardAdcPins[i]] != PC_ANALOG) { continue; }
-    long sum = 0;
-    for (int j = 0; j < 8; j++) { sum += analogRead(boardAdcPins[i]); delay(1); }
-    int avg = sum / 8;
-    float v  = avg * 3.3f / 4095.0f;
-    int bar  = map(avg, 0, 4095, 0, 32);
-    Serial.printf("  A%-2d/GPIO%-2d [", i, boardAdcPins[i]);
-    for (int b = 0; b < 32; b++) Serial.print(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
-    Serial.printf("] %4d (%.2fV)\n", avg, v);
+struct cmdMorse_args {
+  arg_str_t *pin;
+  arg_str_t *message;
+  arg_end_t *end;
+  static void setArgs(struct cmdMorse_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "Pin to write to");
+    args.message = arg_strn(NULL, NULL, "<message>", 1, MAX_ARGS - 1, "The message to output");
+    args.end = arg_end(2);
   }
-  Serial.println();
-}
-
-void cmdScope(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: scope <pin> [samples=80] [delay_ms=5]")); return; }
-  int pin     = resolvePin(argv[1], PC_ANALOG);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int samples = (argc >= 3) ? constrain(safeAtoi(argv[2]), 10, 200) : 80;
-  int dly     = (argc >= 4) ? constrain(safeAtoi(argv[3]), 1, 500)  : 5;
-
-  int* vals = (int*)malloc(samples * sizeof(int));
-  if (!vals) { Serial.println(RED "malloc failed" RESET); return; }
-
-  Serial.printf("\n  " CYAN "Scope GPIO%d" RESET " — %d samples @ %dms\n\n", pin, samples, dly);
-  for (int i = 0; i < samples; i++) { vals[i] = analogRead(pin); delay(dly); }
-
-  int vmin = 4095, vmax = 0;
-  long vsum = 0;
-  for (int i = 0; i < samples; i++) {
-    if (vals[i] < vmin) vmin = vals[i];
-    if (vals[i] > vmax) vmax = vals[i];
-    vsum += vals[i];
-  }
-
-  int height = 12;
-  int range  = vmax - vmin;
-  if (range == 0) range = 1;
-  for (int row = height - 1; row >= 0; row--) {
-    Serial.print("  ");
-    for (int i = 0; i < samples && i < 100; i++) {
-      int mapped = map(vals[i], vmin, vmax, 0, height - 1);
-      if      (mapped == row) Serial.print(CYAN "▪" RESET);
-      else if (mapped >  row) Serial.print(GRAY "│" RESET);
-      else                    Serial.print(" ");
+  static int implementation(int argc, char** argv, struct cmdMorse_args &args) {
+    int pin = resolvePin(args.pin->sval[0], PC_DOUT);
+    if (pin < 0) { printf(RED "Invalid pin" RESET "\n"); return -1; }
+    pinMode(pin, OUTPUT); digitalWrite(pin, LOW);
+    const char* mt[] = {".-","-...","-.-.","-..",".","..-.","--.","....","..",".---","-.-",".-..","--","-.","---",".--.","--.-",".-.","...","-","..-","...-",".--","-..-","-.--","--.."};
+    printf("Morse GPIO%d: ", pin);
+    for (int a = 0; a < args.message->count; a++) {
+      for (const char* c = args.message->sval[a]; *c; c++) {
+        char ch = toupper(*c);
+        if (ch >= 'A' && ch <= 'Z') {
+          printf("%c", ch);
+          const char* code = mt[ch - 'A'];
+          for (const char* m = code; *m; m++) {
+            digitalWrite(pin, HIGH); printf(*m == '.' ? "." : "-");
+            delay(*m == '.' ? 100 : 300);
+            digitalWrite(pin, LOW); delay(100);
+          }
+          delay(300);
+        } else if (ch == ' ') { printf(" "); delay(700); }
+      }
+      printf(" ");
     }
-    Serial.println();
+    printf("Done\n");
+    return 0;
   }
-  Serial.printf("  Min:%d  Max:%d  Avg:%ld  (%.2f–%.2fV)\n\n",
-                vmin, vmax, vsum / samples,
-                vmin * 3.3f / 4095.0f, vmax * 3.3f / 4095.0f);
-  free(vals);
-}
+};
+static struct cmdMorse_args cmdMorseHelp;
 
-void cmdMonitor(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: monitor <pin> <interval_ms> [duration_s=10]")); return; }
-  int pin      = resolvePin(argv[1], PC_ANALOG | PC_DIN);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int interval = max(50, safeAtoi(argv[2]));
-  int duration = (argc >= 4) ? constrain(safeAtoi(argv[3]), 1, 300) : 10;
-
-  Serial.printf("\n  " YELLOW "Monitor GPIO%d" RESET " every %dms for %ds\n\n", pin, interval, duration);
-  unsigned long end = millis() + duration * 1000UL;
-  while (millis() < end) {
-    unsigned long t = (millis() - bootTime) / 1000;
-    if (pinAssignment[pin] == PC_ANALOG) {
-      int raw = analogRead(pin);
-      float v = raw * 3.3f / 4095.0f;
-      Serial.printf("  [t+%lus] %d (%.3fV)\n", t, raw, v);
-    } else {
-      Serial.printf("  [t+%lus] %s\n", t, digitalRead(pin) ? GREEN "HIGH" RESET : GRAY "LOW" RESET);
+struct cmdSensor_args {
+  arg_end_t *end;
+  static void setArgs(struct cmdSensor_args &args) {
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdSensor_args &args) {
+    printf("\n  " YELLOW "Sensor Monitor (ADC — 3.3V ref, 12-bit)" RESET "\n\n");
+    for (int i = 0; i < BOARD_ADC_COUNT; i++) {
+      // Only read out pins configured for analog input
+      if (pinAssignment[boardAdcPins[i]] != PC_ANALOG) { continue; }
+      long sum = 0;
+      for (int j = 0; j < 8; j++) { sum += analogRead(boardAdcPins[i]); delay(1); }
+      int avg = sum / 8;
+      float v  = avg * 3.3f / 4095.0f;
+      int bar  = map(avg, 0, 4095, 0, 32);
+      printf("  A%-2d/GPIO%-2d [", i, boardAdcPins[i]);
+      for (int b = 0; b < 32; b++) printf(b < bar ? GREEN "█" RESET : GRAY "░" RESET);
+      printf("] %4d (%.2fV)\n", avg, v);
     }
-    delay(interval);
+    printf("\n");
+    return 0;
   }
-  Serial.println(GREEN "  Monitor done" RESET "\n");
-}
+};
+static struct cmdSensor_args cmdSensorHelp;
+
+struct cmdScope_args {
+  arg_str_t *pin;
+  arg_int_t *samples;
+  arg_int_t *adelay;
+  arg_end_t *end;
+  static void setArgs(struct cmdScope_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "The pin to monitor");
+    args.samples = arg_int0(NULL, NULL, "samples", "The numble of samples to collect");
+    args.adelay = arg_int0(NULL, NULL, "delay_ms", "Delay between samples in ms");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdScope_args &args) {
+    int pin     = resolvePin(args.pin->sval[0], PC_ANALOG);
+    if (pin < 0) { printf(RED "Invalid pin" RESET "\n"); return -1; }
+    int samples = (args.samples->count > 0) ? constrain(args.samples->ival[0], 10, 200) : 80;
+    int dly     = (args.adelay->count > 0) ? constrain(args.adelay->ival[0], 1, 500)  : 5;
+
+    int* vals = (int*)malloc(samples * sizeof(int));
+    if (!vals) { printf(RED "malloc failed" RESET "\n"); return -1; }
+
+    printf("\n  " CYAN "Scope GPIO%d" RESET " — %d samples @ %dms\n\n", pin, samples, dly);
+    for (int i = 0; i < samples; i++) { vals[i] = analogRead(pin); delay(dly); }
+
+    int vmin = 4095, vmax = 0;
+    long vsum = 0;
+    for (int i = 0; i < samples; i++) {
+      if (vals[i] < vmin) vmin = vals[i];
+      if (vals[i] > vmax) vmax = vals[i];
+      vsum += vals[i];
+    }
+
+    int height = 12;
+    int range  = vmax - vmin;
+    if (range == 0) range = 1;
+    for (int row = height - 1; row >= 0; row--) {
+      printf("  ");
+      for (int i = 0; i < samples && i < 100; i++) {
+        int mapped = map(vals[i], vmin, vmax, 0, height - 1);
+        if      (mapped == row) printf(CYAN "▪" RESET);
+        else if (mapped >  row) printf(GRAY "│" RESET);
+        else                    printf(" ");
+      }
+      printf("\n");
+    }
+    printf("  Min:%d  Max:%d  Avg:%ld  (%.2f–%.2fV)\n\n",
+                  vmin, vmax, vsum / samples,
+                  vmin * 3.3f / 4095.0f, vmax * 3.3f / 4095.0f);
+    free(vals);
+    return 0;
+  }
+};
+static struct cmdScope_args cmdScopeHelp;
+
+struct cmdMonitor_args {
+  arg_str_t *pin;
+  arg_int_t *interval;
+  arg_int_t *duration;
+  arg_end_t *end;
+  static void setArgs(struct cmdMonitor_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "Pin to monitor");
+    args.interval = arg_int1(NULL, NULL, "<interval_ms>", "The interval between samples in ms");
+    args.duration = arg_int0(NULL, NULL, "duration_s", "The total time to monitor in s");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdMonitor_args &args) {
+    int pin      = resolvePin(args.pin->sval[0], PC_ANALOG | PC_DIN);
+    if (pin < 0) { printf(RED "Invalid pin" RESET "\n"); return -1; }
+    int interval = max(50, args.interval->ival[0]);
+    int duration = (args.duration->count) ? constrain(args.duration->ival[0], 1, 300) : 10;
+
+    printf("\n  " YELLOW "Monitor GPIO%d" RESET " every %dms for %ds\n\n", pin, interval, duration);
+    unsigned long end = millis() + duration * 1000UL;
+    while (millis() < end) {
+      unsigned long t = (millis() - bootTime) / 1000;
+      if (pinAssignment[pin] == PC_ANALOG) {
+        int raw = analogRead(pin);
+        float v = raw * 3.3f / 4095.0f;
+        printf("  [t+%lus] %d (%.3fV)\n", t, raw, v);
+      } else {
+        printf("  [t+%lus] %s\n", t, digitalRead(pin) ? GREEN "HIGH" RESET : GRAY "LOW" RESET);
+      }
+      delay(interval);
+    }
+    printf(GREEN "  Monitor done" RESET "\n\n");
+    return 0;
+  }
+};
+static struct cmdMonitor_args cmdMonitorHelp;
 
 struct cmdPins_args {
   // Add all command arguments here (in implicit order)
@@ -1710,14 +1801,14 @@ void setup() {
   //Console.addCmd("dac", "", cmdDAC);
   #endif
   Command<struct cmdGPIO_args>::addCmd({"gpio"}, "Quick GPIO", cmdGPIOHelp);
-  //Console.addCmd("tone", "", cmdTone);
-  //Console.addCmd("notone", "", cmdNoTone);
-  //Console.addCmd("tsense", "", cmdTouch);
-  //Console.addCmd("disco", "", cmdDisco);
-  //Console.addCmd("morse", "", cmdMorse);
-  //Console.addCmd("sensor", "", cmdSensor);
-  //Console.addCmd("scope", "", cmdScope);
-  //Console.addCmd("monitor", "", cmdMonitor);
+  Command<struct cmdTone_args>::addCmd({"tone"}, "Square wave tone", cmdToneHelp);
+  Command<struct cmdNoTone_args>::addCmd({"notone"}, "Stop tone", cmdNoToneHelp);
+  Command<struct cmdTouch_args>::addCmd({"tsense"}, "Capacitive touch read", cmdTouchHelp);
+  Command<struct cmdDisco_args>::addCmd({"disco"}, "LED show", cmdDiscoHelp);
+  Command<struct cmdMorse_args>::addCmd({"morse"}, "Morse code", cmdMorseHelp);
+  Command<struct cmdSensor_args>::addCmd({"sensor"}, "All ADC channels with bar", cmdSensorHelp);
+  Command<struct cmdScope_args>::addCmd({"scope"}, "Oscilloscope plot", cmdScopeHelp);
+  Command<struct cmdMonitor_args>::addCmd({"monitor"}, "Live pin monitor", cmdMonitorHelp);
   Command<struct cmdPins_args>::addCmd({"pins"}, "Show current pin configuration", cmdPinsHelp);
 
   // Filesystem
