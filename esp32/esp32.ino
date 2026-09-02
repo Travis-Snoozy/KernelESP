@@ -540,15 +540,26 @@ struct cmdPWM_args {
 static struct cmdPWM_args cmdPWMHelp;
 
 #ifdef SOC_DAC_SUPPORTED
-void cmdDAC(char** argv, uint8_t argc) {
-  if (argc < 3) { Serial.println(F("Usage: dac <25|26> <0-255>")); return; }
-  int pin = resolvePin(argv[1], PC_DAC);
-  if (pin < 0) { Serial.println(RED "Invalid pin" RESET); return; }
-  int val = constrain(safeAtoi(argv[2]), 0, 255);
-  dacWrite(pin, val);
-  float v = val * 3.3f / 255.0f;
-  Serial.printf("DAC GPIO%d = %d (%.3fV)\n", pin, val, v);
-}
+struct cmdDac_args {
+  arg_str_t *pin;
+  arg_int_t *value;
+  arg_end_t *end;
+  static void setArgs(struct cmdDac_args &args) {
+    args.pin = arg_str1(NULL, NULL, "<pin>", "The DAC pin to output to");
+    args.value = arg_int1(NULL, NULL, "<value>", "The analog value to output");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdDac_args &args) {
+    int pin = resolvePin(args.pin->sval[0], PC_DAC);
+    if (pin < 0) { printf(RED "Invalid pin" RESET "\n"); return -1; }
+    int val = constrain(args.value->ival[0], 0, 255);
+    dacWrite(pin, val);
+    float v = val * 3.3f / 255.0f;
+    printf("DAC GPIO%d = %d (%.3fV)\n", pin, val, v);
+    return 0;
+  }
+};
+static struct cmdDac_args cmdDacHelp;
 #endif
 
 struct cmdTouch_args {
@@ -845,10 +856,8 @@ struct cmdMonitor_args {
 static struct cmdMonitor_args cmdMonitorHelp;
 
 struct cmdPins_args {
-  // Add all command arguments here (in implicit order)
   arg_end_t *end;
   static void setArgs(struct cmdPins_args &args) {
-    // Set all arg_xxx_t* that were defined
     args.end = arg_end(2);
   }
   static int implementation(int argc, char** argv, struct cmdPins_args &args) {
@@ -1465,18 +1474,27 @@ struct cmdEval_args {
 };
 static struct cmdEval_args cmdEvalHelp;
 
-void cmdRun(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: run <script_file>")); return; }
-  String path = buildPath(argv[1]);
-  File f = SPIFFS.open(path, FILE_READ);
-  if (!f) { Serial.printf(RED "Script not found: %s\n" RESET, argv[1]); return; }
-  String content = f.readString();
-  f.close();
-  Serial.printf(CYAN ">>> run %s" RESET "\n", argv[1]);
-  runScript(content.c_str());
-  Serial.printf(CYAN ">>> done (%u bytes)" RESET "\n", content.length());
-  klog(("run " + path).c_str());
-}
+struct cmdRun_args {
+  arg_str_t *file;
+  arg_end_t *end;
+  static void setArgs(struct cmdRun_args &args) {
+    args.file = arg_str1(NULL, NULL, "<file>", "The script file to run");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdRun_args &args) {
+    String path = buildPath(args.file->sval[0]);
+    File f = SPIFFS.open(path, FILE_READ);
+    if (!f) { printf(RED "Script not found: %s\n" RESET, args.file->sval[0]); return -1; }
+    String content = f.readString();
+    f.close();
+    printf(CYAN ">>> run %s" RESET "\n", argv[1]);
+    runScript(content.c_str());
+    printf(CYAN ">>> done (%u bytes)" RESET "\n", content.length());
+    klog(("run " + path).c_str());
+    return 0;
+  }
+};
+static struct cmdRun_args cmdRunHelp;
 
 struct cmdFor_args {
   arg_int_t *count;
@@ -1506,11 +1524,20 @@ struct cmdFor_args {
 };
 static struct cmdFor_args cmdForHelp;
 
-void cmdDelay(char** argv, uint8_t argc) {
-  if (argc < 2) { Serial.println(F("Usage: delay <ms>")); return; }
-  int ms = constrain(safeAtoi(argv[1]), 0, 60000);
-  delay(ms);
-}
+struct cmdDelay_args {
+  arg_int_t *adelay;
+  arg_end_t *end;
+  static void setArgs(struct cmdDelay_args &args) {
+    args.adelay = arg_int1(NULL, NULL, "<delay>", "Delay time in ms");
+    args.end = arg_end(2);
+  }
+  static int implementation(int argc, char** argv, struct cmdDelay_args &args) {
+    int ms = constrain(args.adelay->ival[0], 0, 60000);
+    delay(ms);
+    return 0;
+  }
+};
+static struct cmdDelay_args cmdDelayHelp;
 
 // System Commands
 struct cmdFree_args {
@@ -1733,7 +1760,7 @@ void setup() {
   Command<struct cmdAnalogRead_args>::addCmd({"aread", "analogread"}, "ADC read (0-4095, 3.3V)", cmdAnalogReadHelp);
   Command<struct cmdPWM_args>::addCmd({"pwm"}, "LEDC PWM output", cmdPWMHelp);
   #ifdef SOC_DAC_SUPPORTED
-  //Console.addCmd("dac", "DAC voltage output", cmdDAC);
+  Command<struct cmdDac_args>::addCmd({"dac"}, "DAC voltage output", cmdDacHelp);
   #endif
   Command<struct cmdGPIO_args>::addCmd({"gpio"}, "Quick GPIO", cmdGPIOHelp);
   Command<struct cmdTone_args>::addCmd({"tone"}, "Square wave tone", cmdToneHelp);
@@ -1775,11 +1802,9 @@ void setup() {
 
   // Scripting
   Command<struct cmdEval_args>::addCmd({"eval", "exec"}, "Run commands as though read from a script", cmdEvalHelp);
-//  Console.addCmd("run", "Execute file script", cmdRun);
-//  Console.addCmd("sh", "", cmdRun);
+  Command<struct cmdRun_args>::addCmd({"run", "sh"}, "Execute file script", cmdRunHelp);
   Command<struct cmdFor_args>::addCmd({"for", "loop"}, "Run a command multiple times", cmdForHelp);
-//  Console.addCmd("delay", "Wait", cmdDelay);
-//  Console.addCmd("sleep", "", cmdDelay);
+  Command<struct cmdDelay_args>::addCmd({"delay", "sleep"}, "Wait", cmdDelayHelp);
 
   // System
   Command<struct cmdSysInfo_args>::addCmd({"sysinfo", "neofetch"}, "Show system information", cmdSysInfoHelp);
