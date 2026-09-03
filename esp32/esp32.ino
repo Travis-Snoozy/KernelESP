@@ -67,7 +67,6 @@ const int boardDacPins[] = {DAC1, DAC2};
 #define PATH_LEN      64
 #define DMESG_LINES   12
 #define DMESG_LEN     80
-#define HOSTNAME      "kernelesp"
 
 // ANSI helpers
 #define RESET   "\033[0m"
@@ -99,6 +98,7 @@ char  currentPath[PATH_LEN] = "/";
 unsigned long bootTime;
 pinCap_t  pinCapabilities[SOC_GPIO_PIN_COUNT];
 pinCap_t  pinAssignment[SOC_GPIO_PIN_COUNT];
+String prompt;
 
 // Kernel log
 struct DmesgEntry { unsigned long ts; char msg[DMESG_LEN]; };
@@ -107,10 +107,11 @@ uint8_t dmesgHead = 0;
 uint8_t dmesgCount = 0;
 
 // WiFi state
+String Hostname       = "kernelesp";
 bool   wifiConnected  = false;
 bool   apActive       = false;
 String staSSID        = "";
-String apSSID         = HOSTNAME "_ap";
+String apSSID         = Hostname + "_ap";
 String apPASS         = "kernelesp";
 
 // Web server (optional)
@@ -137,6 +138,19 @@ int safeAtoi(const char* s) {
 char* ltrim(char* s) {
   while (*s == ' ' || *s == '\t') s++;
   return s;
+}
+
+void setPrompt() {
+  prompt = BGREEN "root@";
+  prompt += Hostname;
+  prompt += RESET ":" BLUE;
+  prompt += currentPath;
+  prompt += RESET;
+  prompt += (wifiConnected ? GREEN " [" BCYAN "net" GREEN "]" : "");
+  prompt += WHITE "$ " RESET;
+
+  Console.setPrompt(prompt);
+  return;
 }
 
 // Console class command adapter/convenience wrapper
@@ -952,7 +966,9 @@ struct cmdCd_args {
   }
   static int implementation(int argc, char** argv, struct cmdCd_args &args) {
     if (!(args.dst->count) || strcmp(args.dst->sval[0], "/") == 0) {
-      strncpy(currentPath, "/", PATH_LEN - 1); return 0;
+      strncpy(currentPath, "/", PATH_LEN - 1);
+      setPrompt();
+      return 0;
     }
     if (strcmp(args.dst->sval[0], "..") == 0) {
       if (strcmp(currentPath, "/") == 0) return 0;
@@ -960,6 +976,7 @@ struct cmdCd_args {
       if (p.endsWith("/")) p = p.substring(0, p.length() - 1);
       int last = p.lastIndexOf('/');
       strncpy(currentPath, (last <= 0 ? "/" : p.substring(0, last + 1)).c_str(), PATH_LEN - 1);
+      setPrompt();
       return 0;
     }
     // Absolute or relative
@@ -967,6 +984,7 @@ struct cmdCd_args {
     if (!target.endsWith("/")) target += "/";
     if (isDirectory(target.substring(0, target.length() - 1)) || target == "/") {
       strncpy(currentPath, target.c_str(), PATH_LEN - 1);
+      setPrompt();
     } else {
       printf(RED "cd: '%s' not found\n" RESET, args.dst->sval[0]);
     }
@@ -1254,6 +1272,7 @@ struct cmdWifiConnect_args {
       printf("\n  " RED "Connection failed" RESET"\n");
       WiFi.disconnect();
     }
+    setPrompt();
     return 0;
   }
 };
@@ -1268,6 +1287,7 @@ struct cmdWifiDisconnect_args {
     WiFi.disconnect(true);
     wifiConnected = false;
     printf("  WiFi disconnected\n");
+    setPrompt();
     return 0;
   }
 };
@@ -1359,6 +1379,10 @@ struct cmdWifiHostname_args {
   static int implementation(int argc, char** argv, struct cmdWifiHostname_args &args) {
     if (args.name->count) {
       WiFi.setHostname(args.name->sval[0]);
+      Hostname = args.name->sval[0];
+      apSSID = args.name->sval[0];
+      apSSID += "_ap";
+      setPrompt();
       printf("  Hostname set to '%s'\n", args.name->sval[0]);
     } else {
       printf("  Hostname: %s\n", WiFi.getHostname());
@@ -1579,7 +1603,7 @@ struct cmdSysInfo_args {
     );
 
     printf("  " YELLOW "OS     " RESET ": KernelESP v1.0\n");
-    printf("  " YELLOW "Host   " RESET ": %s\n", HOSTNAME);
+    printf("  " YELLOW "Host   " RESET ": %s\n", Hostname);
     printf("  " YELLOW "Board  " RESET ": "ARDUINO_BOARD" @ %d MHz\n", ESP.getCpuFreqMHz());
     printf("  " YELLOW "Chip   " RESET ": %s  Rev%d  Cores:%d\n", ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores());
     printf("  " YELLOW "Flash  " RESET ": %u KB  (mode:%d  speed:%d MHz)\n",
@@ -1747,10 +1771,9 @@ void setup() {
   klog("SPIFFS OK");
   klog("Serial @ 115200");
 
-  // Todo: dynamic hostname, path, wifi
-  Console.setPrompt(BGREEN "root@" HOSTNAME RESET ":" BLUE "" RESET "" WHITE "$ " RESET);
   // We can't do filesystem operations if we use PSRAM
   Console.usePsram(false);
+  setPrompt();
   Console.begin();
   Console.setMaxHistory(16);
   // Hardware
